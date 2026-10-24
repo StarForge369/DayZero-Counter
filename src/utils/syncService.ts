@@ -6,7 +6,7 @@
 
 export const CANONICAL_SYNC_KEY = 'DAYZERO_PRIMARY';
 const SYNC_KEY_STORAGE = 'dayzero_cloud_synckey';
-const SYNC_API_BASE_URL = (import.meta.env.VITE_SYNC_API_BASE_URL || '').replace(/\\/+$/, '');
+const SYNC_API_BASE_URL = (import.meta.env.VITE_SYNC_API_BASE_URL || '').replace(/\/+$/, '');
 const syncApiUrl = (path: string) => `${SYNC_API_BASE_URL}${path}`;
 
 export function getOrCreateSyncKey(): string {
