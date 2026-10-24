@@ -81,10 +81,10 @@ export async function pushDataToCloud(
 
 export async function pullDataFromCloud(
   syncKey: string
-): Promise<{ success: boolean; data?: CloudPayload; updatedAt?: string }> {
+): Promise<{ success: boolean; data?: CloudPayload; updatedAt?: string; notFound?: boolean }> {
   try {
     const res = await fetch(`/api/sync/load/${encodeURIComponent((syncKey || CANONICAL_SYNC_KEY).toUpperCase())}`);
-    if (!res.ok) return { success: false };
+    if (!res.ok) return { success: false, notFound: res.status === 404 };
     const json = await res.json();
     if (json.success && json.data) {
       return { success: true, data: json.data, updatedAt: json.updatedAt };
@@ -143,11 +143,9 @@ export function subscribeToRealTimeSync(
       };
 
       eventSource.onerror = () => {
+        // EventSource reconnects on its own. Closing and replacing it here creates
+        // unnecessary connection churn, especially behind hosting proxies.
         onStatusChange?.(false);
-        eventSource?.close();
-        if (!isClosed) {
-          setTimeout(connect, 3000);
-        }
       };
     } catch {
       onStatusChange?.(false);
