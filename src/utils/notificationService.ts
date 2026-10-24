@@ -12,7 +12,8 @@ export async function initServiceWorker(): Promise<ServiceWorkerRegistration | n
   }
 
   try {
-    const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+    const appBase = import.meta.env.BASE_URL || '/';
+    const reg = await navigator.serviceWorker.register(`${appBase}sw.js`, { scope: appBase });
     swRegistration = reg;
 
     // Listen for updates or state changes
@@ -123,7 +124,7 @@ export async function triggerMilestoneNotification(
     customMessage ||
     `Congratulations! You've officially reached Day ${milestoneDay} (${milestoneLabel}) from origin ${startDate}. Keep the streak alive!`;
 
-  const icon = '/logo.jpg';
+  const icon = `${import.meta.env.BASE_URL}logo.jpg`;
 
   let sent = false;
 
