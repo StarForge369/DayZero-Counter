@@ -1,11 +1,16 @@
 import React, { useState } from 'react';
-import { X, Download, Upload, Check, AlertCircle, FileCheck } from 'lucide-react';
+import { X, Download, Upload, Check, AlertCircle, FileCheck, History } from 'lucide-react';
 import { playHapticSound, toLocalDateString } from '../utils/dateUtils';
+import { Counter } from '../types';
 
 interface BackupModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onDataRestored: (restoredData?: Record<string, any>) => void;
+  onDataRestored: (restoredData: {
+    counters: Counter[];
+    activeCounterId: string;
+    rawStorage?: Record<string, any>;
+  }) => void;
   soundEnabled?: boolean;
 }
 
@@ -23,16 +28,20 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const handleExport = () => {
     if (soundEnabled) playHapticSound('click');
 
-    const activeId = localStorage.getItem('dayzero_active_id_v5') || 'primary-origin-13-10-2026-1347';
+    const activeId =
+      localStorage.getItem('dayzero_active_id_v5') || 'primary-origin-13-10-2026-1347';
+
+    // Comprehensive snapshot supporting all past and modern versions
     const backup: Record<string, any> = {
       appName: 'Day Zero',
       version: 2,
       exportedAt: new Date().toISOString(),
       activeCounterId: activeId,
+      counters: [],
       storage: {},
     };
 
-    // Collect all Day Zero related items from localStorage
+    // 1. Gather all Day Zero keys from localStorage
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (!key) continue;
@@ -44,7 +53,8 @@ export const BackupModal: React.FC<BackupModalProps> = ({
         key.startsWith('notes_') ||
         key.startsWith('milestones_') ||
         key.startsWith('target_events_') ||
-        key === 'theme_mode'
+        key === 'theme_mode' ||
+        key === 'dayzero_cloud_synckey'
       ) {
         const raw = localStorage.getItem(key);
         if (raw !== null) {
@@ -55,6 +65,11 @@ export const BackupModal: React.FC<BackupModalProps> = ({
           }
         }
       }
+    }
+
+    // 2. Populate top-level counters for instant portability
+    if (backup.storage['dayzero_counters_v5']) {
+      backup.counters = backup.storage['dayzero_counters_v5'];
     }
 
     const jsonStr = JSON.stringify(backup, null, 2);
@@ -78,58 +93,151 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       try {
         const text = event.target?.result as string;
         if (!text || !text.trim()) {
-          throw new Error('Backup file is empty');
+          throw new Error('Backup file is empty.');
         }
 
         const parsed = JSON.parse(text);
         if (typeof parsed !== 'object' || parsed === null) {
-          throw new Error('Invalid backup JSON structure');
+          throw new Error('Invalid JSON format.');
         }
 
-        // Determine if backup has nested storage or is a flat key-value dictionary
-        const sourceMap = parsed.storage && typeof parsed.storage === 'object'
-          ? parsed.storage
-          : parsed;
+        let parsedCounters: Counter[] = [];
+        let parsedActiveId = 'primary-origin-13-10-2026-1347';
+        const storageToWrite: Record<string, string> = {};
 
-        const restoredData: Record<string, any> = {};
+        // Case A: File is a bare array of counters (Format 1)
+        if (Array.isArray(parsed)) {
+          parsedCounters = parsed;
+          parsedActiveId = parsed[0]?.id || parsedActiveId;
+          storageToWrite['dayzero_counters_v5'] = JSON.stringify(parsedCounters);
+          storageToWrite['dayzero_active_id_v5'] = parsedActiveId;
+        } else {
+          // Case B: File is an object (Format 2, 3, or legacy key-value dictionary)
+          const source = (parsed.storage && typeof parsed.storage === 'object')
+            ? { ...parsed, ...parsed.storage }
+            : (parsed.data && typeof parsed.data === 'object')
+            ? { ...parsed, ...parsed.data }
+            : parsed;
 
-        Object.keys(sourceMap).forEach((key) => {
-          // Ignore top-level metadata keys if flat
-          if (['version', 'appName', 'exportedAt', 'storage'].includes(key)) return;
-
-          const val = sourceMap[key];
-          if (val === undefined || val === null) return;
-
-          // Safely serialize objects to JSON strings for localStorage
-          const strValue = typeof val === 'string' ? val : JSON.stringify(val);
-          localStorage.setItem(key, strValue);
-
-          // Keep in restoredData
-          try {
-            restoredData[key] = typeof val === 'string' ? JSON.parse(val) : val;
-          } catch {
-            restoredData[key] = val;
+          // 1. Extract counters
+          if (Array.isArray(source.dayzero_counters_v5)) {
+            parsedCounters = source.dayzero_counters_v5;
+          } else if (typeof source.dayzero_counters_v5 === 'string') {
+            try {
+              parsedCounters = JSON.parse(source.dayzero_counters_v5);
+            } catch {}
+          } else if (Array.isArray(source.counters)) {
+            parsedCounters = source.counters;
           }
+
+          // 2. Extract active counter ID
+          if (typeof source.dayzero_active_id_v5 === 'string') {
+            parsedActiveId = source.dayzero_active_id_v5;
+          } else if (typeof source.activeCounterId === 'string') {
+            parsedActiveId = source.activeCounterId;
+          } else if (parsedCounters.length > 0) {
+            parsedActiveId = parsedCounters[0].id;
+          }
+
+          // 3. Extract habits & check-ins if structured as maps
+          if (source.habits && typeof source.habits === 'object' && !Array.isArray(source.habits)) {
+            Object.keys(source.habits).forEach((cid) => {
+              storageToWrite[`habits_${cid}`] = JSON.stringify(source.habits[cid]);
+            });
+          }
+          if (source.checkIns && typeof source.checkIns === 'object' && !Array.isArray(source.checkIns)) {
+            Object.keys(source.checkIns).forEach((cid) => {
+              storageToWrite[`habit_checkins_${cid}`] = JSON.stringify(source.checkIns[cid]);
+            });
+          }
+          if (source.notes && typeof source.notes === 'object' && !Array.isArray(source.notes)) {
+            Object.keys(source.notes).forEach((cid) => {
+              storageToWrite[`notes_${cid}`] = JSON.stringify(source.notes[cid]);
+            });
+          }
+          if (source.milestones && typeof source.milestones === 'object' && !Array.isArray(source.milestones)) {
+            Object.keys(source.milestones).forEach((cid) => {
+              storageToWrite[`milestones_${cid}`] = JSON.stringify(source.milestones[cid]);
+            });
+          }
+          if (source.targetEvents && typeof source.targetEvents === 'object' && !Array.isArray(source.targetEvents)) {
+            Object.keys(source.targetEvents).forEach((cid) => {
+              storageToWrite[`target_events_${cid}`] = JSON.stringify(source.targetEvents[cid]);
+            });
+          }
+
+          // 4. Extract any flat keys from legacy formats
+          Object.keys(source).forEach((k) => {
+            if (
+              k.startsWith('dayzero_') ||
+              k.startsWith('habits_') ||
+              k.startsWith('habit_checkins_') ||
+              k.startsWith('notes_') ||
+              k.startsWith('milestones_') ||
+              k.startsWith('target_events_') ||
+              k === 'theme_mode'
+            ) {
+              const rawVal = source[k];
+              if (rawVal !== undefined && rawVal !== null) {
+                if (typeof rawVal === 'string') {
+                  // If string is already JSON, preserve it; otherwise check if it needs stringification
+                  storageToWrite[k] = rawVal;
+                } else {
+                  storageToWrite[k] = JSON.stringify(rawVal);
+                }
+              }
+            }
+          });
+
+          // Ensure counters and active ID are always written
+          if (parsedCounters.length > 0) {
+            storageToWrite['dayzero_counters_v5'] = JSON.stringify(parsedCounters);
+          }
+          storageToWrite['dayzero_active_id_v5'] = parsedActiveId;
+        }
+
+        // DEEP RESTORE: Clean old dayzero keys to prevent stale orphan records
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (
+            key &&
+            (key.startsWith('dayzero_') ||
+              key.startsWith('habits_') ||
+              key.startsWith('habit_checkins_') ||
+              key.startsWith('notes_') ||
+              key.startsWith('milestones_') ||
+              key.startsWith('target_events_'))
+          ) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach((k) => localStorage.removeItem(k));
+
+        // Write all normalized backup entries into localStorage
+        Object.keys(storageToWrite).forEach((k) => {
+          localStorage.setItem(k, storageToWrite[k]);
         });
 
-        // Ensure active counter is tracked
-        if (parsed.activeCounterId) {
-          localStorage.setItem('dayzero_active_id_v5', parsed.activeCounterId);
-          restoredData['dayzero_active_id_v5'] = parsed.activeCounterId;
-        }
-
         if (soundEnabled) playHapticSound('celebrate');
-        setImportStatus('Backup verified and restored successfully!');
+        setImportStatus('Backup verified and restored cleanly!');
         setErrorMessage(null);
 
+        // Notify parent with the exact restored state
         setTimeout(() => {
-          onDataRestored(restoredData);
+          onDataRestored({
+            counters: parsedCounters,
+            activeCounterId: parsedActiveId,
+            rawStorage: storageToWrite,
+          });
           onClose();
-        }, 1000);
+        }, 800);
       } catch (err: any) {
         console.error('Backup restore failure:', err);
         setErrorMessage(
-          err?.message ? `Restore error: ${err.message}` : 'Failed to parse backup file. Please select a valid Day Zero JSON backup.'
+          err?.message
+            ? `Failed to restore: ${err.message}`
+            : 'Unable to parse backup file. Please select a valid Day Zero backup JSON.'
         );
         setImportStatus(null);
       }
@@ -149,7 +257,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
           <div className="flex items-center gap-2">
             <FileCheck className="w-5 h-5 text-stone-900 dark:text-stone-100" />
             <h3 className="text-base font-bold text-stone-900 dark:text-white">
-              Data Backup & Restore
+              Data Backup & Deep Restore
             </h3>
           </div>
           <button
@@ -163,7 +271,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
 
         <div className="py-4 space-y-4">
           <p className="text-xs text-stone-600 dark:text-stone-400 leading-relaxed">
-            Download your full Day Zero dataset (counters, daily habit check-ins, journal notes, target countdowns) as a JSON backup file, or restore a previous backup on any device.
+            Download your full Day Zero dataset as a JSON backup, or restore previous backups from any past or current version across all devices.
           </p>
 
           {/* Export Box */}
@@ -172,7 +280,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               Export Backup
             </span>
             <p className="text-[11px] text-stone-500 dark:text-stone-400 mb-3">
-              Download your entire history into a clean JSON file.
+              Download your complete journey, habits, notes, and milestones as a portable JSON file.
             </p>
             <button
               onClick={handleExport}
@@ -185,11 +293,17 @@ export const BackupModal: React.FC<BackupModalProps> = ({
 
           {/* Import Box */}
           <div className="p-4 rounded-2xl bg-stone-50 dark:bg-stone-950/50 border border-stone-200 dark:border-stone-800">
-            <span className="text-xs font-semibold text-stone-900 dark:text-white block mb-1">
-              Restore from Backup
-            </span>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-semibold text-stone-900 dark:text-white">
+                Restore from Backup
+              </span>
+              <span className="inline-flex items-center gap-1 text-[10px] font-mono font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">
+                <History className="w-3 h-3" />
+                All Versions Supported
+              </span>
+            </div>
             <p className="text-[11px] text-stone-500 dark:text-stone-400 mb-3">
-              Upload a previously exported .json file to restore all counters, habits, notes, and milestones.
+              Upload any previous .json backup file (current or legacy formats) to deeply restore all counters and streaks.
             </p>
             <label className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-xl border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 hover:bg-stone-100 dark:hover:bg-stone-800 transition-all cursor-pointer">
               <Upload className="w-4 h-4" />

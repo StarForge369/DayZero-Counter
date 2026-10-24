@@ -8,7 +8,11 @@ const __dirname = path.dirname(__filename);
 
 const publicDir = path.join(__dirname, '..', 'public');
 
-// Function to generate PNG buffer
+// Function to generate PNG buffer for the user's provided 3-ring logo:
+// Ring 1 (outer): Silver / Gray circle (#b0adaa)
+// Ring 2 (middle): Golden / Amber vertical oval (#f5b72f)
+// Ring 3 (lower inner): Vibrant Green circle (#68ce3b)
+// Background: Deep Obsidian / Dark Stone (#1c1917)
 function createPng(width, height, isMaskable = false) {
   const bytesPerPixel = 4;
   const rowSize = width * bytesPerPixel;
@@ -16,12 +20,19 @@ function createPng(width, height, isMaskable = false) {
 
   const cx = width / 2;
   const cy = height / 2;
-  const outerR = isMaskable ? width * 0.32 : width * 0.38;
-  const strokeW = Math.max(2, Math.round(width * 0.045));
-  const innerRx = isMaskable ? width * 0.13 : width * 0.16;
-  const innerRy = isMaskable ? height * 0.18 : height * 0.22;
-  const tickTop = isMaskable ? height * 0.18 : height * 0.12;
-  const tickBottom = tickTop + (isMaskable ? height * 0.12 : height * 0.15);
+  const scale = isMaskable ? 0.78 : 0.92;
+
+  // Geometry parameters scaled
+  const outerR = (width * 0.355) * scale;
+  const outerThick = Math.max(2, Math.round(width * 0.035 * scale));
+
+  const ovalRx = (width * 0.226) * scale;
+  const ovalRy = (height * 0.312) * scale;
+  const ovalThick = Math.max(2, Math.round(width * 0.043 * scale));
+
+  const greenR = (width * 0.168) * scale;
+  const greenCy = cy + (height * 0.098) * scale;
+  const greenThick = Math.max(2, Math.round(width * 0.035 * scale));
 
   let offset = 0;
   for (let y = 0; y < height; y++) {
@@ -32,30 +43,41 @@ function createPng(width, height, isMaskable = false) {
       const dy = y - cy;
       const distFromCenter = Math.sqrt(dx * dx + dy * dy);
 
-      // Check outer circle stroke
-      const onOuterRing = Math.abs(distFromCenter - outerR) <= strokeW / 2;
+      // 1. Lower Inner Green Circle
+      const greenDy = y - greenCy;
+      const distFromGreen = Math.sqrt(dx * dx + greenDy * greenDy);
+      const onGreen = Math.abs(distFromGreen - greenR) <= greenThick / 2;
 
-      // Check vertical caliber tick at 12 o'clock
-      const onTick = Math.abs(x - cx) <= strokeW / 2 && y >= tickTop && y <= tickBottom;
+      // 2. Middle Golden Amber Oval
+      const ovalNorm = (dx * dx) / (ovalRx * ovalRx) + (dy * dy) / (ovalRy * ovalRy);
+      const onOval = Math.abs(Math.sqrt(ovalNorm) - 1.0) <= (ovalThick / (ovalRx * 2));
 
-      // Check center zero ellipse stroke
-      const ellipseDy = y - (cy + Math.round(height * 0.02));
-      const ellipseNorm = (dx * dx) / (innerRx * innerRx) + (ellipseDy * ellipseDy) / (innerRy * innerRy);
-      const onInnerZero = Math.abs(Math.sqrt(ellipseNorm) - 1.0) <= (strokeW / (innerRx * 2));
+      // 3. Outer Silver/Gray Circle
+      const onOuter = Math.abs(distFromCenter - outerR) <= outerThick / 2;
 
-      const isMark = onOuterRing || onTick || onInnerZero;
-
-      if (isMark) {
-        // Crisp warm white / stone-100 mark
+      if (onGreen) {
+        // Vibrant Green (#68ce3b)
+        rawData[offset++] = 104; // R
+        rawData[offset++] = 206; // G
+        rawData[offset++] = 59;  // B
+        rawData[offset++] = 255; // A
+      } else if (onOval) {
+        // Golden Amber (#f5b72f)
         rawData[offset++] = 245; // R
-        rawData[offset++] = 245; // G
-        rawData[offset++] = 244; // B
+        rawData[offset++] = 183; // G
+        rawData[offset++] = 47;  // B
+        rawData[offset++] = 255; // A
+      } else if (onOuter) {
+        // Silver Gray (#b0adaa)
+        rawData[offset++] = 176; // R
+        rawData[offset++] = 173; // G
+        rawData[offset++] = 170; // B
         rawData[offset++] = 255; // A
       } else {
-        // Deep obsidian background: stone-950
-        rawData[offset++] = 12;  // R
-        rawData[offset++] = 10;  // G
-        rawData[offset++] = 9;   // B
+        // Deep Obsidian Background (#1c1917)
+        rawData[offset++] = 28;  // R
+        rawData[offset++] = 25;  // G
+        rawData[offset++] = 23;  // B
         rawData[offset++] = 255; // A
       }
     }
@@ -68,11 +90,11 @@ function createPng(width, height, isMaskable = false) {
   const ihdrData = Buffer.alloc(13);
   ihdrData.writeUInt32BE(width, 0);
   ihdrData.writeUInt32BE(height, 4);
-  ihdrData[8] = 8; // bit depth
-  ihdrData[9] = 6; // color type: RGBA
-  ihdrData[10] = 0; // compression
-  ihdrData[11] = 0; // filter
-  ihdrData[12] = 0; // interlace
+  ihdrData[8] = 8;
+  ihdrData[9] = 6;
+  ihdrData[10] = 0;
+  ihdrData[11] = 0;
+  ihdrData[12] = 0;
   const ihdrChunk = createChunk('IHDR', ihdrData);
 
   // IDAT Chunk
@@ -97,7 +119,6 @@ function createChunk(type, data) {
   return chunk;
 }
 
-// CRC32 table & computation
 const crcTable = new Int32Array(256);
 for (let n = 0; n < 256; n++) {
   let c = n;
@@ -115,19 +136,9 @@ function crc32(buf) {
   return c ^ -1;
 }
 
-// Generate files
 fs.writeFileSync(path.join(publicDir, 'pwa-192x192.png'), createPng(192, 192, false));
 fs.writeFileSync(path.join(publicDir, 'pwa-512x512.png'), createPng(512, 512, false));
 fs.writeFileSync(path.join(publicDir, 'pwa-maskable-512x512.png'), createPng(512, 512, true));
 fs.writeFileSync(path.join(publicDir, 'apple-touch-icon.png'), createPng(180, 180, false));
 
-// Also write clean public/icon.svg
-const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <rect width="512" height="512" rx="100" fill="#0c0a09"/>
-  <circle cx="256" cy="256" r="190" stroke="#f5f5f4" stroke-width="24" fill="none"/>
-  <line x1="256" y1="66" x2="256" y2="136" stroke="#f5f5f4" stroke-width="24" stroke-linecap="round"/>
-  <ellipse cx="256" cy="266" rx="76" ry="106" stroke="#f5f5f4" stroke-width="24" fill="none"/>
-</svg>`;
-fs.writeFileSync(path.join(publicDir, 'icon.svg'), svg, 'utf-8');
-
-console.log('Successfully generated all PWA icons in public/ directory!');
+console.log('Successfully generated all brand PWA icons matching provided image!');

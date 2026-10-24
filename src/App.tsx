@@ -106,14 +106,13 @@ export default function App() {
     if (next) playHapticSound('click');
   };
 
-  // Cloud Sync Key state (defaults to canonical key so laptop & mobile bridge automatically)
+  // Cloud Sync Key state
   const [syncKey, setSyncKey] = useState<string>(() => getOrCreateSyncKey());
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [isRealTimeConnected, setIsRealTimeConnected] = useState<boolean>(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | undefined>(undefined);
-  const hasInitialPullCompleted = useRef<boolean>(false);
 
-  // Persistent Counters
+  // Persistent Counters: local storage is the source of truth on startup
   const [counters, setCounters] = useState<Counter[]>(() => {
     try {
       const savedV5 = localStorage.getItem('dayzero_counters_v5');
@@ -163,9 +162,17 @@ export default function App() {
   useEffect(() => {
     try {
       const savedH = localStorage.getItem(`habits_${activeCounter.id}`);
-      if (savedH) setHabits(JSON.parse(savedH));
+      if (savedH) {
+        setHabits(JSON.parse(savedH));
+      } else {
+        setHabits(DEFAULT_HABITS.map((h) => ({ ...h, counterId: activeCounter.id })));
+      }
       const savedC = localStorage.getItem(`habit_checkins_${activeCounter.id}`);
-      if (savedC) setCheckIns(JSON.parse(savedC));
+      if (savedC) {
+        setCheckIns(JSON.parse(savedC));
+      } else {
+        setCheckIns([]);
+      }
     } catch {}
   }, [activeCounter.id]);
 
@@ -201,34 +208,48 @@ export default function App() {
   const [journalInitialDay, setJournalInitialDay] = useState<number | undefined>(undefined);
   const [journalInitialDateStr, setJournalInitialDateStr] = useState<string | undefined>(undefined);
 
-  // Immediate Cloud Push Function
+  // Immediate Cloud Push Function: scans all counters to preserve entire dataset
   const pushFullPayloadToCloud = useCallback(
     async (
       overrideCounters = counters,
       overrideHabits = habits,
-      overrideCheckIns = checkIns
+      overrideCheckIns = checkIns,
+      overrideActiveId = activeCounterId
     ) => {
       setIsSyncing(true);
+      const targetActiveId = overrideActiveId || activeCounter.id;
+
       const payload: CloudPayload = {
         counters: overrideCounters,
-        activeCounterId,
+        activeCounterId: targetActiveId,
         notes: {},
         milestones: {},
-        habits: { [activeCounter.id]: overrideHabits },
-        checkIns: { [activeCounter.id]: overrideCheckIns },
+        habits: {},
+        checkIns: {},
         targetEvents: {},
         notifiedMilestones: [],
         themeMode: isDarkMode ? 'dark' : 'light',
       };
 
-      try {
-        const notes = localStorage.getItem(`notes_${activeCounter.id}`);
-        if (notes) payload.notes[activeCounter.id] = JSON.parse(notes);
-        const ms = localStorage.getItem(`milestones_${activeCounter.id}`);
-        if (ms) payload.milestones[activeCounter.id] = JSON.parse(ms);
-        const ev = localStorage.getItem(`target_events_${activeCounter.id}`);
-        if (ev) payload.targetEvents[activeCounter.id] = JSON.parse(ev);
-      } catch {}
+      // Scan all counters to gather complete dataset
+      overrideCounters.forEach((c) => {
+        try {
+          const h = localStorage.getItem(`habits_${c.id}`);
+          if (h) payload.habits[c.id] = JSON.parse(h);
+          const ch = localStorage.getItem(`habit_checkins_${c.id}`);
+          if (ch) payload.checkIns[c.id] = JSON.parse(ch);
+          const n = localStorage.getItem(`notes_${c.id}`);
+          if (n) payload.notes[c.id] = JSON.parse(n);
+          const ms = localStorage.getItem(`milestones_${c.id}`);
+          if (ms) payload.milestones[c.id] = JSON.parse(ms);
+          const ev = localStorage.getItem(`target_events_${c.id}`);
+          if (ev) payload.targetEvents[c.id] = JSON.parse(ev);
+        } catch {}
+      });
+
+      // Override current counter's in-flight edits
+      if (overrideHabits) payload.habits[targetActiveId] = overrideHabits;
+      if (overrideCheckIns) payload.checkIns[targetActiveId] = overrideCheckIns;
 
       const res = await pushDataToCloud(syncKey, payload);
       setIsSyncing(false);
@@ -239,13 +260,29 @@ export default function App() {
     [counters, activeCounterId, activeCounter.id, habits, checkIns, isDarkMode, syncKey]
   );
 
-  // Apply incoming cloud data helper
+  // Apply incoming cloud data helper with CLIENT-FIRST PERSISTENCE & HEALING
   const applyCloudData = useCallback(
     (cloudData: CloudPayload, updatedAt?: string) => {
+      if (!cloudData) return;
+
+      // Guard: Never let an empty cloud payload wipe non-empty local device data!
+      const hasLocalCounters = counters && counters.length > 0;
+      const isCloudEmpty = !Array.isArray(cloudData.counters) || cloudData.counters.length === 0;
+
+      if (isCloudEmpty) {
+        if (hasLocalCounters) {
+          // Cloud healing: restore cloud with our local device state immediately
+          pushFullPayloadToCloud();
+        }
+        return;
+      }
+
+      // Valid cloud data arrived: apply safely
       if (Array.isArray(cloudData.counters) && cloudData.counters.length > 0) {
         setCounters(cloudData.counters);
         localStorage.setItem('dayzero_counters_v5', JSON.stringify(cloudData.counters));
       }
+
       if (cloudData.activeCounterId) {
         setActiveCounterId(cloudData.activeCounterId);
         localStorage.setItem('dayzero_active_id_v5', cloudData.activeCounterId);
@@ -253,29 +290,38 @@ export default function App() {
 
       const cId = cloudData.activeCounterId || activeCounter.id;
 
-      if (cloudData.habits && cloudData.habits[cId]) {
-        setHabits(cloudData.habits[cId]);
-        localStorage.setItem(`habits_${cId}`, JSON.stringify(cloudData.habits[cId]));
+      // Update habits & checkIns across all counters
+      if (cloudData.habits && typeof cloudData.habits === 'object') {
+        Object.keys(cloudData.habits).forEach((cid) => {
+          localStorage.setItem(`habits_${cid}`, JSON.stringify(cloudData.habits[cid]));
+        });
+        if (cloudData.habits[cId]) {
+          setHabits(cloudData.habits[cId]);
+        }
       }
 
-      if (cloudData.checkIns && cloudData.checkIns[cId]) {
-        setCheckIns(cloudData.checkIns[cId]);
-        localStorage.setItem(`habit_checkins_${cId}`, JSON.stringify(cloudData.checkIns[cId]));
+      if (cloudData.checkIns && typeof cloudData.checkIns === 'object') {
+        Object.keys(cloudData.checkIns).forEach((cid) => {
+          localStorage.setItem(`habit_checkins_${cid}`, JSON.stringify(cloudData.checkIns[cid]));
+        });
+        if (cloudData.checkIns[cId]) {
+          setCheckIns(cloudData.checkIns[cId]);
+        }
       }
 
-      if (cloudData.notes) {
+      if (cloudData.notes && typeof cloudData.notes === 'object') {
         Object.keys(cloudData.notes).forEach((cid) => {
           localStorage.setItem(`notes_${cid}`, JSON.stringify(cloudData.notes[cid]));
         });
       }
 
-      if (cloudData.milestones) {
+      if (cloudData.milestones && typeof cloudData.milestones === 'object') {
         Object.keys(cloudData.milestones).forEach((cid) => {
           localStorage.setItem(`milestones_${cid}`, JSON.stringify(cloudData.milestones[cid]));
         });
       }
 
-      if (cloudData.targetEvents) {
+      if (cloudData.targetEvents && typeof cloudData.targetEvents === 'object') {
         Object.keys(cloudData.targetEvents).forEach((cid) => {
           localStorage.setItem(`target_events_${cid}`, JSON.stringify(cloudData.targetEvents[cid]));
         });
@@ -288,10 +334,10 @@ export default function App() {
 
       if (updatedAt) setLastSyncedAt(updatedAt);
     },
-    [activeCounter.id]
+    [counters, activeCounter.id, pushFullPayloadToCloud]
   );
 
-  // REAL-TIME SSE SUBSCRIPTION: Broadcasts changes across devices within milliseconds!
+  // REAL-TIME SSE SUBSCRIPTION: Broadcasts changes across devices in milliseconds!
   useEffect(() => {
     const unsubscribe = subscribeToRealTimeSync(
       syncKey,
@@ -306,14 +352,16 @@ export default function App() {
     return () => unsubscribe();
   }, [syncKey, applyCloudData]);
 
-  // Periodic poll + Focus/Visibility refresh (e.g. when laptop powers on or opens browser)
+  // Periodic poll + Focus/Visibility refresh (e.g. when devices wake or unlock)
   useEffect(() => {
     const refreshFromCloud = async () => {
       const res = await pullDataFromCloud(syncKey);
       if (res.success && res.data) {
         applyCloudData(res.data, res.updatedAt);
+      } else if (!res.success && counters.length > 0) {
+        // Backend store was empty or unavailable; heal it
+        pushFullPayloadToCloud();
       }
-      hasInitialPullCompleted.current = true;
     };
 
     // Initial pull
@@ -335,7 +383,7 @@ export default function App() {
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleVisibility);
     };
-  }, [syncKey, applyCloudData]);
+  }, [syncKey, applyCloudData, counters.length, pushFullPayloadToCloud]);
 
   // Listen for local mutations (notes, milestones, countdowns) and push immediately
   useEffect(() => {
@@ -382,7 +430,7 @@ export default function App() {
     localStorage.setItem(`habit_checkins_${activeCounter.id}`, JSON.stringify(updatedCheckIns));
 
     // INSTANT REAL-TIME CLOUD PUSH!
-    pushFullPayloadToCloud(counters, habits, updatedCheckIns);
+    pushFullPayloadToCloud(counters, habits, updatedCheckIns, activeCounter.id);
   };
 
   const handleAddHabit = (name: string, category: 'health' | 'focus' | 'mind' | 'routine') => {
@@ -399,7 +447,7 @@ export default function App() {
     localStorage.setItem(`habits_${activeCounter.id}`, JSON.stringify(updatedHabits));
 
     // INSTANT REAL-TIME CLOUD PUSH!
-    pushFullPayloadToCloud(counters, updatedHabits, checkIns);
+    pushFullPayloadToCloud(counters, updatedHabits, checkIns, activeCounter.id);
   };
 
   const handleDeleteHabit = (habitId: string) => {
@@ -413,7 +461,7 @@ export default function App() {
     localStorage.setItem(`habit_checkins_${activeCounter.id}`, JSON.stringify(updatedCheckIns));
 
     // INSTANT REAL-TIME CLOUD PUSH!
-    pushFullPayloadToCloud(counters, updatedHabits, updatedCheckIns);
+    pushFullPayloadToCloud(counters, updatedHabits, updatedCheckIns, activeCounter.id);
   };
 
   // Milestone Notification Check (Standard & Custom e.g. 15 days, 100 days, 1 year)
@@ -463,7 +511,7 @@ export default function App() {
     }
     setCounters(updated);
     setActiveCounterId(counter.id);
-    pushFullPayloadToCloud(updated);
+    pushFullPayloadToCloud(updated, habits, checkIns, counter.id);
   };
 
   const handleResetToToday = () => {
@@ -480,53 +528,51 @@ export default function App() {
         : c
     );
     setCounters(updated);
-    pushFullPayloadToCloud(updated);
+    pushFullPayloadToCloud(updated, habits, checkIns, activeCounter.id);
   };
 
-  // Safe and accurate data restoration from backup
-  const handleDataRestored = (restoredData?: Record<string, any>) => {
+  // Safe and accurate data restoration from backup (all versions supported)
+  const handleDataRestored = (restored: {
+    counters: Counter[];
+    activeCounterId: string;
+    rawStorage?: Record<string, any>;
+  }) => {
     try {
-      // 1. Reload counters
-      const savedCounters = localStorage.getItem('dayzero_counters_v5');
-      let newCounters: Counter[] = counters;
-      if (savedCounters) {
-        const parsed = JSON.parse(savedCounters);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          newCounters = parsed;
-          setCounters(parsed);
-        }
-      }
+      const newCounters =
+        restored.counters && restored.counters.length > 0 ? restored.counters : counters;
+      const newActiveId = restored.activeCounterId || newCounters[0]?.id || activeCounterId;
 
-      // 2. Reload active counter ID
-      const savedActiveId =
-        localStorage.getItem('dayzero_active_id_v5') ||
-        newCounters[0]?.id ||
-        activeCounterId;
-      setActiveCounterId(savedActiveId);
+      // 1. Update counters & active ID synchronously
+      setCounters(newCounters);
+      setActiveCounterId(newActiveId);
 
-      // 3. Reload habits for active counter
-      const savedHabits = localStorage.getItem(`habits_${savedActiveId}`);
-      let newHabits = habits;
+      // 2. Hydrate active habits
+      let newHabits = DEFAULT_HABITS.map((h) => ({ ...h, counterId: newActiveId }));
+      const savedHabits = localStorage.getItem(`habits_${newActiveId}`);
       if (savedHabits) {
-        newHabits = JSON.parse(savedHabits);
-        setHabits(newHabits);
+        try {
+          newHabits = JSON.parse(savedHabits);
+        } catch {}
       }
+      setHabits(newHabits);
 
-      // 4. Reload checkIns for active counter
-      const savedCheckIns = localStorage.getItem(`habit_checkins_${savedActiveId}`);
-      let newCheckIns = checkIns;
+      // 3. Hydrate active check-ins
+      let newCheckIns: HabitCheckIn[] = [];
+      const savedCheckIns = localStorage.getItem(`habit_checkins_${newActiveId}`);
       if (savedCheckIns) {
-        newCheckIns = JSON.parse(savedCheckIns);
-        setCheckIns(newCheckIns);
+        try {
+          newCheckIns = JSON.parse(savedCheckIns);
+        } catch {}
       }
+      setCheckIns(newCheckIns);
 
-      // 5. Notify all child components to refresh immediately
+      // 4. Notify child views (Journal, Milestones, Countdowns)
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('dayzero_data_synced'));
       }
 
-      // 6. Push the newly restored data to cloud so other devices immediately sync to the backup!
-      pushFullPayloadToCloud(newCounters, newHabits, newCheckIns);
+      // 5. Cloud Push: push the restored payload with the exact restored active counter ID
+      pushFullPayloadToCloud(newCounters, newHabits, newCheckIns, newActiveId);
     } catch (e) {
       console.error('Error applying restored data:', e);
     }
@@ -542,7 +588,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100 flex flex-col transition-colors selection:bg-stone-900 selection:text-white dark:selection:bg-white dark:selection:text-stone-900">
-      {/* 3-zone Header with Minimal Logo, Navigation Tabs & Real-Time Cloud Sync */}
+      {/* 3-zone Header with Provided Logo, Navigation Tabs & Real-Time Cloud Sync */}
       <Header
         currentTab={currentTab}
         onSelectTab={setCurrentTab}
@@ -560,9 +606,14 @@ export default function App() {
         {/* Real-time sync status indicator banner */}
         <div className="flex items-center justify-between px-3.5 py-1.5 rounded-xl bg-stone-100/80 dark:bg-stone-900/80 border border-stone-200 dark:border-stone-800 text-[11px] font-mono text-stone-500 dark:text-stone-400">
           <div className="flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${isRealTimeConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isRealTimeConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+              }`}
+            />
             <span>
-              {isRealTimeConnected ? 'Cross-Platform Sync Active' : 'Connecting to Cloud...'} ({syncKey})
+              {isRealTimeConnected ? 'Cross-Platform Sync Active' : 'Offline / Standalone Mode'}{' '}
+              ({syncKey})
             </span>
           </div>
           <button
@@ -570,7 +621,13 @@ export default function App() {
             className="text-stone-700 dark:text-stone-300 hover:underline cursor-pointer flex items-center gap-1 font-medium"
           >
             <Cloud className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-            <span>{isSyncing ? 'Syncing...' : lastSyncedAt ? `Synced ${new Date(lastSyncedAt).toLocaleTimeString()}` : 'Sync Code'}</span>
+            <span>
+              {isSyncing
+                ? 'Syncing...'
+                : lastSyncedAt
+                ? `Synced ${new Date(lastSyncedAt).toLocaleTimeString()}`
+                : 'Sync Code'}
+            </span>
           </button>
         </div>
 
@@ -666,7 +723,7 @@ export default function App() {
         )}
       </main>
 
-      {/* Clean Footer with Minimal Logo, Cloud Sync & Backup Link */}
+      {/* Clean Footer with Provided Logo, Cloud Sync & Backup Link */}
       <footer className="border-t border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-950 py-6 text-xs text-stone-500 dark:text-stone-400 transition-colors">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-center sm:text-left">
           <div className="flex items-center gap-2.5">
@@ -701,7 +758,7 @@ export default function App() {
               onClick={handleResetToToday}
               className="hover:text-stone-900 dark:hover:text-stone-100 transition-colors cursor-pointer flex items-center gap-1 text-stone-600 dark:text-stone-400"
             >
-              <RotateCcw className="w-3 h-3" />
+              <RotateCcw className="w-3.5 h-3.5" />
               <span>Reset Origin</span>
             </button>
             <span aria-hidden="true">·</span>

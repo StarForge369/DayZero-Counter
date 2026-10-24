@@ -1,12 +1,12 @@
-// Day Zero Service Worker - Milestone Notifications & Caching
-const CACHE_NAME = 'dayzero-v2';
+// Day Zero Service Worker - Milestone Notifications & Offline Support
+const CACHE_NAME = 'dayzero-v3';
 
-// Assets to precache for offline resilience
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
+  '/icon.svg',
+  '/pwa-192x192.png',
   '/logo.jpg',
-  '/manifest.webmanifest',
 ];
 
 self.addEventListener('install', (event) => {
@@ -14,7 +14,7 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll(PRECACHE_ASSETS).catch((err) => {
-        console.warn('Precache partial fallback:', err);
+        console.warn('Precache non-critical note:', err);
       });
     })
   );
@@ -34,12 +34,17 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Cache-first for logo and static assets, network-first for others
+// Cache-first for local static brand icons, network-first for other requests
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
 
-  if (url.pathname === '/logo.jpg') {
+  // Bypass API routes from service worker cache
+  if (url.pathname.startsWith('/api/')) {
+    return;
+  }
+
+  if (url.pathname === '/icon.svg' || url.pathname === '/pwa-192x192.png' || url.pathname === '/logo.jpg') {
     event.respondWith(
       caches.match(event.request).then((cached) => cached || fetch(event.request))
     );
@@ -64,8 +69,8 @@ self.addEventListener('message', (event) => {
 
     const options = {
       body,
-      icon: '/logo.jpg',
-      badge: '/logo.jpg',
+      icon: '/pwa-192x192.png',
+      badge: '/icon.svg',
       vibrate: [200, 100, 200, 100, 200],
       tag: `milestone-day-${milestoneDay}`,
       renotify: true,
@@ -99,7 +104,6 @@ self.addEventListener('notificationclick', (event) => {
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
         if ('focus' in client) {
-          // Send message to client to switch to milestones tab
           client.postMessage({
             type: 'NOTIFICATION_CLICKED',
             tab: 'milestones',

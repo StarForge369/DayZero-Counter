@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import providedLogoUrl from '../assets/images/dayzero_minimal_logo_1792162564407.jpg';
 
 interface LogoProps {
   size?: 'sm' | 'md' | 'lg' | 'xl';
@@ -20,32 +21,31 @@ export const Logo: React.FC<LogoProps> = ({
     xl: 'w-24 h-24',
   };
 
-  const imageSrc = '/src/assets/images/dayzero_minimal_logo_1792162564407.jpg';
-
   return (
     <div className={`flex items-center gap-2.5 ${className}`}>
       <div
-        className={`${sizeClasses[size]} rounded-xl overflow-hidden relative shadow-xs ring-1 ring-stone-900/10 dark:ring-stone-100/10 bg-stone-950 dark:bg-stone-100 text-white dark:text-stone-950 flex items-center justify-center shrink-0 transition-colors`}
+        className={`${sizeClasses[size]} rounded-xl overflow-hidden relative shadow-xs ring-1 ring-stone-900/10 dark:ring-stone-100/10 bg-[#1c1917] flex items-center justify-center shrink-0 transition-colors`}
       >
         {!imageError ? (
           <img
-            src={imageSrc}
-            alt="Day Zero Minimal Logo"
-            referrerPolicy="no-referrer"
+            src={providedLogoUrl}
+            alt="Day Zero Logo"
             onError={() => setImageError(true)}
             className="w-full h-full object-cover"
           />
         ) : (
-          /* Pure Minimalist SVG Mark */
+          /* Pure Vector Mark matching provided 3-ring geometry */
           <svg
             viewBox="0 0 100 100"
-            className="w-full h-full p-1.5"
+            className="w-full h-full p-1"
             fill="none"
-            stroke="currentColor"
           >
-            <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="6" />
-            <line x1="50" y1="10" x2="50" y2="24" stroke="currentColor" strokeWidth="6" strokeLinecap="round" />
-            <ellipse cx="50" cy="52" rx="16" ry="22" stroke="currentColor" strokeWidth="6" />
+            {/* Outer Silver Ring */}
+            <circle cx="50" cy="50" r="38" stroke="#b0adaa" strokeWidth="4" />
+            {/* Middle Golden Amber Oval */}
+            <ellipse cx="50" cy="50" rx="24" ry="34" stroke="#f5b72f" strokeWidth="4.5" />
+            {/* Lower Inner Vibrant Green Circle */}
+            <circle cx="50" cy="60" r="18" stroke="#68ce3b" strokeWidth="4" />
           </svg>
         )}
       </div>
