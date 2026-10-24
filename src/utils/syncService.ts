@@ -70,7 +70,7 @@ export async function pushDataToCloud(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ syncKey: (syncKey || CANONICAL_SYNC_KEY).toUpperCase(), data: payload }),
     });
-    if (!res.ok) return { success: false, notFound: res.status === 404 };
+    if (!res.ok) return { success: false };
     const data = await res.json();
     return { success: true, updatedAt: data.updatedAt };
   } catch (err) {
@@ -84,7 +84,7 @@ export async function pullDataFromCloud(
 ): Promise<{ success: boolean; data?: CloudPayload; updatedAt?: string; notFound?: boolean }> {
   try {
     const res = await fetch(`/api/sync/load/${encodeURIComponent((syncKey || CANONICAL_SYNC_KEY).toUpperCase())}`);
-    if (!res.ok) return { success: false };
+    if (!res.ok) return { success: false, notFound: res.status === 404 };
     const json = await res.json();
     if (json.success && json.data) {
       return { success: true, data: json.data, updatedAt: json.updatedAt };
