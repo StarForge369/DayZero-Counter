@@ -208,19 +208,41 @@ export default function App() {
   const [journalInitialDay, setJournalInitialDay] = useState<number | undefined>(undefined);
   const [journalInitialDateStr, setJournalInitialDateStr] = useState<string | undefined>(undefined);
 
+  // Keep callbacks stable so applying cloud snapshots does not restart SSE or polling.
+  const latestSyncStateRef = useRef({
+    counters,
+    habits,
+    checkIns,
+    activeCounterId,
+    isDarkMode,
+    syncKey,
+  });
+  latestSyncStateRef.current = {
+    counters,
+    habits,
+    checkIns,
+    activeCounterId,
+    isDarkMode,
+    syncKey,
+  };
+
   // Immediate Cloud Push Function: scans all counters to preserve entire dataset
   const pushFullPayloadToCloud = useCallback(
     async (
-      overrideCounters = counters,
-      overrideHabits = habits,
-      overrideCheckIns = checkIns,
-      overrideActiveId = activeCounterId
+      overrideCounters?: Counter[],
+      overrideHabits?: Habit[],
+      overrideCheckIns?: HabitCheckIn[],
+      overrideActiveId?: string
     ) => {
-      setIsSyncing(true);
-      const targetActiveId = overrideActiveId || activeCounter.id;
+      const current = latestSyncStateRef.current;
+      const targetCounters = overrideCounters ?? current.counters;
+      const targetHabits = overrideHabits ?? current.habits;
+      const targetCheckIns = overrideCheckIns ?? current.checkIns;
+      const targetActiveId =
+        overrideActiveId || current.activeCounterId || targetCounters[0]?.id || '';
 
       const payload: CloudPayload = {
-        counters: overrideCounters,
+        counters: targetCounters,
         activeCounterId: targetActiveId,
         notes: {},
         milestones: {},
@@ -228,36 +250,41 @@ export default function App() {
         checkIns: {},
         targetEvents: {},
         notifiedMilestones: [],
-        themeMode: isDarkMode ? 'dark' : 'light',
+        themeMode: current.isDarkMode ? 'dark' : 'light',
       };
 
       // Scan all counters to gather complete dataset
-      overrideCounters.forEach((c) => {
+      targetCounters.forEach((counter) => {
         try {
-          const h = localStorage.getItem(`habits_${c.id}`);
-          if (h) payload.habits[c.id] = JSON.parse(h);
-          const ch = localStorage.getItem(`habit_checkins_${c.id}`);
-          if (ch) payload.checkIns[c.id] = JSON.parse(ch);
-          const n = localStorage.getItem(`notes_${c.id}`);
-          if (n) payload.notes[c.id] = JSON.parse(n);
-          const ms = localStorage.getItem(`milestones_${c.id}`);
-          if (ms) payload.milestones[c.id] = JSON.parse(ms);
-          const ev = localStorage.getItem(`target_events_${c.id}`);
-          if (ev) payload.targetEvents[c.id] = JSON.parse(ev);
+          const habitsForCounter = localStorage.getItem(`habits_${counter.id}`);
+          if (habitsForCounter) payload.habits[counter.id] = JSON.parse(habitsForCounter);
+          const checkInsForCounter = localStorage.getItem(`habit_checkins_${counter.id}`);
+          if (checkInsForCounter) payload.checkIns[counter.id] = JSON.parse(checkInsForCounter);
+          const notes = localStorage.getItem(`notes_${counter.id}`);
+          if (notes) payload.notes[counter.id] = JSON.parse(notes);
+          const milestones = localStorage.getItem(`milestones_${counter.id}`);
+          if (milestones) payload.milestones[counter.id] = JSON.parse(milestones);
+          const events = localStorage.getItem(`target_events_${counter.id}`);
+          if (events) payload.targetEvents[counter.id] = JSON.parse(events);
         } catch {}
       });
 
-      // Override current counter's in-flight edits
-      if (overrideHabits) payload.habits[targetActiveId] = overrideHabits;
-      if (overrideCheckIns) payload.checkIns[targetActiveId] = overrideCheckIns;
+      // Preserve in-flight edits to the active counter.
+      payload.habits[targetActiveId] = targetHabits;
+      payload.checkIns[targetActiveId] = targetCheckIns;
 
-      const res = await pushDataToCloud(syncKey, payload);
-      setIsSyncing(false);
-      if (res.success && res.updatedAt) {
-        setLastSyncedAt(res.updatedAt);
+      setIsSyncing(true);
+      try {
+        const res = await pushDataToCloud(current.syncKey, payload);
+        if (res.success) {
+          setIsRealTimeConnected(true);
+          if (res.updatedAt) setLastSyncedAt(res.updatedAt);
+        }
+      } finally {
+        setIsSyncing(false);
       }
     },
-    [counters, activeCounterId, activeCounter.id, habits, checkIns, isDarkMode, syncKey]
+    []
   );
 
   // Apply incoming cloud data helper with CLIENT-FIRST PERSISTENCE & HEALING
@@ -265,76 +292,103 @@ export default function App() {
     (cloudData: CloudPayload, updatedAt?: string) => {
       if (!cloudData) return;
 
-      // Guard: Never let an empty cloud payload wipe non-empty local device data!
-      const hasLocalCounters = counters && counters.length > 0;
-      const isCloudEmpty = !Array.isArray(cloudData.counters) || cloudData.counters.length === 0;
+      const current = latestSyncStateRef.current;
+      const currentActiveCounter =
+        current.counters.find((counter) => counter.id === current.activeCounterId) ||
+        current.counters[0];
 
+      // Guard: Never let an empty cloud payload wipe non-empty local device data.
+      const hasLocalCounters = current.counters.length > 0;
+      const isCloudEmpty = !Array.isArray(cloudData.counters) || cloudData.counters.length === 0;
       if (isCloudEmpty) {
-        if (hasLocalCounters) {
-          // Cloud healing: restore cloud with our local device state immediately
-          pushFullPayloadToCloud();
-        }
+        if (hasLocalCounters) pushFullPayloadToCloud();
         return;
       }
 
-      // Valid cloud data arrived: apply safely
-      if (Array.isArray(cloudData.counters) && cloudData.counters.length > 0) {
-        setCounters(cloudData.counters);
-        localStorage.setItem('dayzero_counters_v5', JSON.stringify(cloudData.counters));
+      // Avoid replacing state with an equivalent snapshot; this keeps subscriptions stable.
+      const serializedCounters = JSON.stringify(cloudData.counters);
+      if (localStorage.getItem('dayzero_counters_v5') !== serializedCounters) {
+        localStorage.setItem('dayzero_counters_v5', serializedCounters);
       }
+      setCounters((previous) =>
+        JSON.stringify(previous) === serializedCounters ? previous : cloudData.counters
+      );
 
       if (cloudData.activeCounterId) {
-        setActiveCounterId(cloudData.activeCounterId);
+        setActiveCounterId((previous) =>
+          previous === cloudData.activeCounterId ? previous : cloudData.activeCounterId
+        );
         localStorage.setItem('dayzero_active_id_v5', cloudData.activeCounterId);
       }
 
-      const cId = cloudData.activeCounterId || activeCounter.id;
+      const counterId =
+        cloudData.activeCounterId || current.activeCounterId || currentActiveCounter?.id || '';
 
-      // Update habits & checkIns across all counters
       if (cloudData.habits && typeof cloudData.habits === 'object') {
-        Object.keys(cloudData.habits).forEach((cid) => {
-          localStorage.setItem(`habits_${cid}`, JSON.stringify(cloudData.habits[cid]));
+        Object.keys(cloudData.habits).forEach((id) => {
+          const serialized = JSON.stringify(cloudData.habits[id]);
+          if (localStorage.getItem(`habits_${id}`) !== serialized) {
+            localStorage.setItem(`habits_${id}`, serialized);
+          }
         });
-        if (cloudData.habits[cId]) {
-          setHabits(cloudData.habits[cId]);
+        if (cloudData.habits[counterId]) {
+          setHabits((previous) =>
+            JSON.stringify(previous) === JSON.stringify(cloudData.habits[counterId])
+              ? previous
+              : cloudData.habits[counterId]
+          );
         }
       }
 
       if (cloudData.checkIns && typeof cloudData.checkIns === 'object') {
-        Object.keys(cloudData.checkIns).forEach((cid) => {
-          localStorage.setItem(`habit_checkins_${cid}`, JSON.stringify(cloudData.checkIns[cid]));
+        Object.keys(cloudData.checkIns).forEach((id) => {
+          const serialized = JSON.stringify(cloudData.checkIns[id]);
+          if (localStorage.getItem(`habit_checkins_${id}`) !== serialized) {
+            localStorage.setItem(`habit_checkins_${id}`, serialized);
+          }
         });
-        if (cloudData.checkIns[cId]) {
-          setCheckIns(cloudData.checkIns[cId]);
+        if (cloudData.checkIns[counterId]) {
+          setCheckIns((previous) =>
+            JSON.stringify(previous) === JSON.stringify(cloudData.checkIns[counterId])
+              ? previous
+              : cloudData.checkIns[counterId]
+          );
         }
       }
 
       if (cloudData.notes && typeof cloudData.notes === 'object') {
-        Object.keys(cloudData.notes).forEach((cid) => {
-          localStorage.setItem(`notes_${cid}`, JSON.stringify(cloudData.notes[cid]));
+        Object.keys(cloudData.notes).forEach((id) => {
+          const serialized = JSON.stringify(cloudData.notes[id]);
+          if (localStorage.getItem(`notes_${id}`) !== serialized) {
+            localStorage.setItem(`notes_${id}`, serialized);
+          }
         });
       }
 
       if (cloudData.milestones && typeof cloudData.milestones === 'object') {
-        Object.keys(cloudData.milestones).forEach((cid) => {
-          localStorage.setItem(`milestones_${cid}`, JSON.stringify(cloudData.milestones[cid]));
+        Object.keys(cloudData.milestones).forEach((id) => {
+          const serialized = JSON.stringify(cloudData.milestones[id]);
+          if (localStorage.getItem(`milestones_${id}`) !== serialized) {
+            localStorage.setItem(`milestones_${id}`, serialized);
+          }
         });
       }
 
       if (cloudData.targetEvents && typeof cloudData.targetEvents === 'object') {
-        Object.keys(cloudData.targetEvents).forEach((cid) => {
-          localStorage.setItem(`target_events_${cid}`, JSON.stringify(cloudData.targetEvents[cid]));
+        Object.keys(cloudData.targetEvents).forEach((id) => {
+          const serialized = JSON.stringify(cloudData.targetEvents[id]);
+          if (localStorage.getItem(`target_events_${id}`) !== serialized) {
+            localStorage.setItem(`target_events_${id}`, serialized);
+          }
         });
       }
 
-      // Notify all child components to re-read updated storage immediately
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('dayzero_data_synced'));
       }
-
       if (updatedAt) setLastSyncedAt(updatedAt);
     },
-    [counters, activeCounter.id, pushFullPayloadToCloud]
+    []
   );
 
   // REAL-TIME SSE SUBSCRIPTION: Broadcasts changes across devices in milliseconds!
@@ -345,7 +399,8 @@ export default function App() {
         applyCloudData(cloudData, updatedAt);
       },
       (connected) => {
-        setIsRealTimeConnected(connected);
+        // An SSE error alone does not prove that the HTTP sync API is offline.
+        if (connected) setIsRealTimeConnected(true);
       }
     );
 
@@ -357,18 +412,23 @@ export default function App() {
     const refreshFromCloud = async () => {
       const res = await pullDataFromCloud(syncKey);
       if (res.success && res.data) {
+        setIsRealTimeConnected(true);
         applyCloudData(res.data, res.updatedAt);
-      } else if (!res.success && counters.length > 0) {
-        // Backend store was empty or unavailable; heal it
+      } else if (res.notFound && latestSyncStateRef.current.counters.length > 0) {
+        // A missing cloud entry is safe to heal from this device's local data.
         pushFullPayloadToCloud();
+      } else if (!res.success) {
+        setIsRealTimeConnected(false);
+      } else {
+        setIsRealTimeConnected(true);
       }
     };
 
     // Initial pull
     refreshFromCloud();
 
-    // 5-second polling safeguard
-    const interval = setInterval(refreshFromCloud, 5000);
+    // Poll less often as a fallback; SSE handles normal real-time updates.
+    const interval = setInterval(refreshFromCloud, 30000);
 
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
@@ -383,7 +443,7 @@ export default function App() {
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleVisibility);
     };
-  }, [syncKey, applyCloudData, counters.length, pushFullPayloadToCloud]);
+  }, [syncKey, applyCloudData, pushFullPayloadToCloud]);
 
   // Listen for local mutations (notes, milestones, countdowns) and push immediately
   useEffect(() => {
@@ -612,7 +672,7 @@ export default function App() {
               }`}
             />
             <span>
-              {isRealTimeConnected ? 'Cross-Platform Sync Active' : 'Offline / Standalone Mode'}{' '}
+              {isRealTimeConnected ? 'Cloud Sync Available' : 'Cloud Sync Unavailable'}{' '}
               ({syncKey})
             </span>
           </div>
