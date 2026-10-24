@@ -6,6 +6,8 @@
 
 export const CANONICAL_SYNC_KEY = 'DAYZERO_PRIMARY';
 const SYNC_KEY_STORAGE = 'dayzero_cloud_synckey';
+const SYNC_API_BASE_URL = (import.meta.env.VITE_SYNC_API_BASE_URL || '').replace(/\/+$/, '');
+const syncApiUrl = (path: string) => `${SYNC_API_BASE_URL}${path}`;
 
 export function getOrCreateSyncKey(): string {
   try {
@@ -44,8 +46,9 @@ export function setCustomSyncKey(key: string) {
 
 export function getShareableSyncUrl(syncKey: string): string {
   if (typeof window === 'undefined') return '';
-  const origin = window.location.origin;
-  return `${origin}/?sync=${encodeURIComponent(syncKey || CANONICAL_SYNC_KEY)}`;
+  const shareUrl = new URL(import.meta.env.BASE_URL || '/', window.location.origin);
+  shareUrl.searchParams.set('sync', syncKey || CANONICAL_SYNC_KEY);
+  return shareUrl.toString();
 }
 
 export interface CloudPayload {
@@ -65,7 +68,7 @@ export async function pushDataToCloud(
   payload: CloudPayload
 ): Promise<{ success: boolean; updatedAt?: string }> {
   try {
-    const res = await fetch('/api/sync/save', {
+    const res = await fetch(syncApiUrl('/api/sync/save'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ syncKey: (syncKey || CANONICAL_SYNC_KEY).toUpperCase(), data: payload }),
@@ -83,7 +86,7 @@ export async function pullDataFromCloud(
   syncKey: string
 ): Promise<{ success: boolean; data?: CloudPayload; updatedAt?: string; notFound?: boolean }> {
   try {
-    const res = await fetch(`/api/sync/load/${encodeURIComponent((syncKey || CANONICAL_SYNC_KEY).toUpperCase())}`);
+    const res = await fetch(syncApiUrl(`/api/sync/load/${encodeURIComponent((syncKey || CANONICAL_SYNC_KEY).toUpperCase())}`));
     if (!res.ok) return { success: false, notFound: res.status === 404 };
     const json = await res.json();
     if (json.success && json.data) {
@@ -124,7 +127,7 @@ export function subscribeToRealTimeSync(
     if (isClosed) return;
     try {
       const targetKey = (syncKey || CANONICAL_SYNC_KEY).toUpperCase();
-      const url = `/api/sync/stream/${encodeURIComponent(targetKey)}`;
+      const url = syncApiUrl(`/api/sync/stream/${encodeURIComponent(targetKey)}`);
       eventSource = new EventSource(url);
 
       eventSource.onopen = () => {

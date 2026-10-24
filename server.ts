@@ -58,6 +58,22 @@ function broadcastToClients(syncKey: string, payload: any) {
 
 async function startServer() {
   const app = express();
+
+  // Permit the public GitHub Pages frontend to call the separate sync API.
+  const allowedFrontendOrigin = 'https://starforge369.github.io';
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin === allowedFrontendOrigin) {
+      res.setHeader('Access-Control-Allow-Origin', allowedFrontendOrigin);
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      res.setHeader('Vary', 'Origin');
+    }
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204);
+    }
+    next();
+  });
   app.use(express.json({ limit: '15mb' }));
 
   // Helper to find the freshest data across keys (e.g. DAYZERO_PRIMARY or user keys like DAY-1398)
