@@ -1,0 +1,6 @@
+{
+  "name": "Day Zero - Precise Days Counter",
+  "description": "Minimalist and precise days counter tracking elapsed time from October 8, 2026 as Day 0 with live time breakdown, calendar view, and milestone projections.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

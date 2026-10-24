@@ -1,0 +1,209 @@
+{
+  "DAYZERO_PRIMARY": {
+    "data": {
+      "counters": [
+        {
+          "id": "primary-origin-13-10-2026-1347",
+          "title": "Days from 13-10-2026",
+          "startDate": "2026-10-13",
+          "startTime": "13:47:00",
+          "description": "Origin date is 13-10-2026 at 1:47 PM (Day 0). 14-10-2026 is Day 1.",
+          "createdAt": "2026-10-13T13:47:00.000Z"
+        }
+      ],
+      "activeCounterId": "primary-origin-13-10-2026-1347",
+      "notes": {},
+      "milestones": {
+        "primary-origin-13-10-2026-1347": [
+          {
+            "day": 15,
+            "label": "No Turning Back Now!"
+          }
+        ]
+      },
+      "habits": {
+        "primary-origin-13-10-2026-1347": [
+          {
+            "id": "h-1792159787520",
+            "counterId": "primary-origin-13-10-2026-1347",
+            "name": "Wakeing Up at 4 A.M.",
+            "category": "routine",
+            "createdAt": "2026-10-16T14:09:47.520Z"
+          }
+        ]
+      },
+      "checkIns": {
+        "primary-origin-13-10-2026-1347": []
+      },
+      "targetEvents": {
+        "primary-origin-13-10-2026-1347": [
+          {
+            "id": "evt-1",
+            "counterId": "primary-origin-13-10-2026-1347",
+            "title": "30-Day Checkpoint",
+            "targetDate": "2026-11-12",
+            "category": "Milestone",
+            "createdAt": "2026-10-16T14:01:58.306Z"
+          },
+          {
+            "id": "evt-2",
+            "counterId": "primary-origin-13-10-2026-1347",
+            "title": "End of Year / New Year Eve",
+            "targetDate": "2026-12-31",
+            "category": "Celebration",
+            "createdAt": "2026-10-16T14:01:58.306Z"
+          },
+          {
+            "id": "evt-3",
+            "counterId": "primary-origin-13-10-2026-1347",
+            "title": "100 Days Club Target",
+            "targetDate": "2027-01-21",
+            "category": "Achievement",
+            "createdAt": "2026-10-16T14:01:58.306Z"
+          }
+        ]
+      },
+      "notifiedMilestones": [],
+      "themeMode": "dark"
+    },
+    "updatedAt": "2026-10-21T12:48:37.148Z"
+  },
+  "DAY-7248": {
+    "data": {
+      "counters": [
+        {
+          "id": "primary-origin-13-10-2026-1347",
+          "title": "Days from 13-10-2026",
+          "startDate": "2026-10-13",
+          "startTime": "13:47:00",
+          "description": "Origin date is 13-10-2026 at 1:47 PM (Day 0). 14-10-2026 is Day 1.",
+          "createdAt": "2026-10-13T13:47:00.000Z"
+        }
+      ],
+      "activeCounterId": "primary-origin-13-10-2026-1347",
+      "notes": {},
+      "milestones": {
+        "primary-origin-13-10-2026-1347": [
+          {
+            "day": 15,
+            "label": "No Turning Back Now!"
+          }
+        ]
+      },
+      "habits": {
+        "primary-origin-13-10-2026-1347": [
+          {
+            "id": "h-1792159787520",
+            "counterId": "primary-origin-13-10-2026-1347",
+            "name": "Wakeing Up at 4 A.M.",
+            "category": "routine",
+            "createdAt": "2026-10-16T14:09:47.520Z"
+          }
+        ]
+      },
+      "checkIns": {
+        "primary-origin-13-10-2026-1347": []
+      },
+      "targetEvents": {
+        "primary-origin-13-10-2026-1347": [
+          {
+            "id": "evt-1",
+            "counterId": "primary-origin-13-10-2026-1347",
+            "title": "30-Day Checkpoint",
+            "targetDate": "2026-11-12",
+            "category": "Milestone",
+            "createdAt": "2026-10-16T14:01:58.306Z"
+          },
+          {
+            "id": "evt-2",
+            "counterId": "primary-origin-13-10-2026-1347",
+            "title": "End of Year / New Year Eve",
+            "targetDate": "2026-12-31",
+            "category": "Celebration",
+            "createdAt": "2026-10-16T14:01:58.306Z"
+          },
+          {
+            "id": "evt-3",
+            "counterId": "primary-origin-13-10-2026-1347",
+            "title": "100 Days Club Target",
+            "targetDate": "2027-01-21",
+            "category": "Achievement",
+            "createdAt": "2026-10-16T14:01:58.306Z"
+          }
+        ]
+      },
+      "notifiedMilestones": [],
+      "themeMode": "dark"
+    },
+    "updatedAt": "2026-10-21T12:48:37.148Z"
+  },
+  "DAY-1398": {
+    "data": {
+      "counters": [
+        {
+          "id": "primary-origin-13-10-2026-1347",
+          "title": "Days from 13-10-2026",
+          "startDate": "2026-10-13",
+          "startTime": "13:47:00",
+          "description": "Origin date is 13-10-2026 at 1:47 PM (Day 0). 14-10-2026 is Day 1.",
+          "createdAt": "2026-10-13T13:47:00.000Z"
+        }
+      ],
+      "activeCounterId": "primary-origin-13-10-2026-1347",
+      "notes": {},
+      "milestones": {
+        "primary-origin-13-10-2026-1347": [
+          {
+            "day": 15,
+            "label": "No Turning Back Now!"
+          }
+        ]
+      },
+      "habits": {
+        "primary-origin-13-10-2026-1347": [
+          {
+            "id": "h-1792159787520",
+            "counterId": "primary-origin-13-10-2026-1347",
+            "name": "Wakeing Up at 4 A.M.",
+            "category": "routine",
+            "createdAt": "2026-10-16T14:09:47.520Z"
+          }
+        ]
+      },
+      "checkIns": {
+        "primary-origin-13-10-2026-1347": []
+      },
+      "targetEvents": {
+        "primary-origin-13-10-2026-1347": [
+          {
+            "id": "evt-1",
+            "counterId": "primary-origin-13-10-2026-1347",
+            "title": "30-Day Checkpoint",
+            "targetDate": "2026-11-12",
+            "category": "Milestone",
+            "createdAt": "2026-10-16T14:01:58.306Z"
+          },
+          {
+            "id": "evt-2",
+            "counterId": "primary-origin-13-10-2026-1347",
+            "title": "End of Year / New Year Eve",
+            "targetDate": "2026-12-31",
+            "category": "Celebration",
+            "createdAt": "2026-10-16T14:01:58.306Z"
+          },
+          {
+            "id": "evt-3",
+            "counterId": "primary-origin-13-10-2026-1347",
+            "title": "100 Days Club Target",
+            "targetDate": "2027-01-21",
+            "category": "Achievement",
+            "createdAt": "2026-10-16T14:01:58.306Z"
+          }
+        ]
+      },
+      "notifiedMilestones": [],
+      "themeMode": "dark"
+    },
+    "updatedAt": "2026-10-21T12:48:37.148Z"
+  }
+}
