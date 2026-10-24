@@ -37,6 +37,18 @@ jobs:
           SYNC_API_BASE_URL: https://day-zero-precise-days-counter.ai.studio
         run: curl --fail --silent --show-error "$SYNC_API_BASE_URL/api/health"
 
+      - name: Verify GitHub Pages CORS
+        if: github.event_name != 'pull_request'
+        env:
+          SYNC_API_BASE_URL: https://day-zero-precise-days-counter.ai.studio
+        run: |
+          headers=$(curl --silent --show-error --dump-header - --output /dev/null --request OPTIONS "$SYNC_API_BASE_URL/api/sync/save" \
+            --header 'Origin: https://starforge369.github.io' \
+            --header 'Access-Control-Request-Method: POST' \
+            --header 'Access-Control-Request-Headers: content-type')
+          printf '%s\n' "$headers"
+          printf '%s\n' "$headers" | grep --ignore-case --fixed-strings 'Access-Control-Allow-Origin: https://starforge369.github.io'
+
       - name: Build static site
         env:
           GITHUB_PAGES: 'true'
