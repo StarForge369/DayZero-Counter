@@ -31,13 +31,14 @@ export function sendNativeNotification(title: string, body: string) {
   if (!isNotificationSupported() || Notification.permission !== 'granted') return;
 
   try {
-    const icon = '/src/assets/images/dayzero_minimal_logo_1792162564407.jpg';
+    const icon = `${import.meta.env.BASE_URL}logo.jpg`;
     if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
       navigator.serviceWorker.ready.then((reg) => {
-        reg.showNotification(title, {
+        return reg.showNotification(title, {
           body,
           icon,
           badge: icon,
+          data: { url: new URL('?tab=milestones', reg.scope).toString() },
         });
       });
     } else {
@@ -90,3 +91,4 @@ export function checkUncelebratedMilestone(
   // Return the closest milestone
   return uncelebrated.sort((a, b) => b.day - a.day)[0];
 }
+

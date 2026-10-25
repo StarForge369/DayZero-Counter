@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, Copy, Check, Cloud, RefreshCw, Smartphone, Laptop, Bell, BellOff, Link2 } from 'lucide-react';
-import { getShareableSyncUrl, setCustomSyncKey } from '../utils/syncService';
+import { getShareableSyncUrl } from '../utils/syncService';
 import { requestNotificationPermission, getNotificationPermissionStatus, sendNativeNotification } from '../utils/notificationUtils';
 import { playHapticSound } from '../utils/dateUtils';
 
@@ -8,9 +8,10 @@ interface CloudSyncModalProps {
   isOpen: boolean;
   onClose: () => void;
   syncKey: string;
-  onSyncKeyChange: (newKey: string) => void;
+  onConnectSyncKey: (newKey: string) => Promise<'loaded' | 'created' | 'failed'>;
   onTriggerSyncNow: () => Promise<void>;
   lastSyncedAt?: string;
+  isConnected: boolean;
   isSyncing: boolean;
   soundEnabled?: boolean;
 }
@@ -19,9 +20,10 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   isOpen,
   onClose,
   syncKey,
-  onSyncKeyChange,
+  onConnectSyncKey,
   onTriggerSyncNow,
   lastSyncedAt,
+  isConnected,
   isSyncing,
   soundEnabled = true,
 }) => {
@@ -58,13 +60,22 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     if (!inputCode.trim()) return;
 
     const formatted = inputCode.trim().toUpperCase();
-    setCustomSyncKey(formatted);
-    onSyncKeyChange(formatted);
-    if (soundEnabled) playHapticSound('celebrate');
-    setConnectMessage(`Connected to ${formatted}! Fetching latest cloud data...`);
+    if (!/^[A-Z0-9_-]{3,64}$/.test(formatted)) {
+      setConnectMessage('Use 3–64 letters, numbers, dashes, or underscores.');
+      return;
+    }
+    setConnectMessage(`Checking cloud data for ${formatted}…`);
     setInputCode('');
-    await onTriggerSyncNow();
-    setTimeout(() => setConnectMessage(null), 3000);
+    const result = await onConnectSyncKey(formatted);
+    if (result !== 'failed' && soundEnabled) playHapticSound('celebrate');
+    setConnectMessage(
+      result === 'loaded'
+        ? `Connected to ${formatted}. Existing cloud data loaded.`
+        : result === 'created'
+        ? `Connected to ${formatted}. This device's data was saved to the cloud.`
+        : 'Could not reach that sync space. Your current connection was kept.'
+    );
+    setTimeout(() => setConnectMessage(null), 4500);
   };
 
   const handleRequestNotifications = async () => {
@@ -122,8 +133,16 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
             </div>
 
             <div className="flex items-center justify-center gap-2 mt-2 text-xs text-stone-500 dark:text-stone-400 font-mono">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>{lastSyncedAt ? `Synced ${new Date(lastSyncedAt).toLocaleTimeString()}` : 'Cloud ready'}</span>
+              <span className={`w-2 h-2 rounded-full ${isSyncing ? 'bg-sky-500 animate-pulse' : isConnected ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+              <span>
+                {isSyncing
+                  ? 'Syncing…'
+                  : lastSyncedAt && isConnected
+                  ? `Synced ${new Date(lastSyncedAt).toLocaleTimeString()}`
+                  : isConnected
+                  ? 'Cloud connected'
+                  : 'Cloud unavailable'}
+              </span>
             </div>
 
             <div className="mt-3.5 flex gap-2">
@@ -230,3 +249,4 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     </div>
   );
 };
+
