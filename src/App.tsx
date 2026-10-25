@@ -235,11 +235,25 @@ export default function App() {
       overrideActiveId?: string
     ) => {
       const current = latestSyncStateRef.current;
-      const targetCounters = overrideCounters ?? current.counters;
-      const targetHabits = overrideHabits ?? current.habits;
-      const targetCheckIns = overrideCheckIns ?? current.checkIns;
+      const targetCounters = Array.isArray(overrideCounters)
+        ? overrideCounters
+        : Array.isArray(current.counters) && current.counters.length > 0
+        ? current.counters
+        : [DEFAULT_INITIAL_COUNTER];
+      const targetHabits = Array.isArray(overrideHabits)
+        ? overrideHabits
+        : Array.isArray(current.habits)
+        ? current.habits
+        : [];
+      const targetCheckIns = Array.isArray(overrideCheckIns)
+        ? overrideCheckIns
+        : Array.isArray(current.checkIns)
+        ? current.checkIns
+        : [];
       const targetActiveId =
-        overrideActiveId || current.activeCounterId || targetCounters[0]?.id || '';
+        (typeof overrideActiveId === 'string' && overrideActiveId)
+          ? overrideActiveId
+          : current.activeCounterId || targetCounters[0]?.id || '';
 
       const payload: CloudPayload = {
         counters: targetCounters,
@@ -859,7 +873,7 @@ export default function App() {
         onClose={() => setIsCloudSyncModalOpen(false)}
         syncKey={syncKey}
         onSyncKeyChange={(newKey) => setSyncKey(newKey)}
-        onTriggerSyncNow={pushFullPayloadToCloud}
+        onTriggerSyncNow={() => pushFullPayloadToCloud()}
         lastSyncedAt={lastSyncedAt}
         isSyncing={isSyncing}
         soundEnabled={soundEnabled}

@@ -136,7 +136,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
               </button>
 
               <button
-                onClick={onTriggerSyncNow}
+                onClick={() => onTriggerSyncNow()}
                 disabled={isSyncing}
                 title="Sync now"
                 className="px-3 py-2 rounded-xl border border-stone-200 dark:border-stone-800 text-xs font-medium text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 transition-colors cursor-pointer flex items-center gap-1 disabled:opacity-50"
