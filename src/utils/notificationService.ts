@@ -126,54 +126,37 @@ export async function triggerMilestoneNotification(
 
   const icon = `${import.meta.env.BASE_URL}logo.jpg`;
 
-  let sent = false;
-
   try {
-    // 1. Post message to active Service Worker controller
-    if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-      navigator.serviceWorker.controller.postMessage({
-        type: 'SHOW_MILESTONE_NOTIFICATION',
-        milestoneDay,
-        milestoneLabel,
-        startDate,
-        customMessage,
-      });
-      sent = true;
-    }
-
-    // 2. Direct Service Worker registration showNotification
-    if (!sent && 'serviceWorker' in navigator) {
+    if ('serviceWorker' in navigator) {
       const reg = swRegistration || (await navigator.serviceWorker.ready.catch(() => null));
       if (reg && 'showNotification' in reg) {
-        const swOptions = {
+        await reg.showNotification(title, {
           body,
           icon,
           badge: icon,
           vibrate: [200, 100, 200, 100, 200],
           tag: `milestone-${milestoneDay}`,
           renotify: true,
-          data: { milestoneDay, url: '/?tab=milestones' },
-        } as unknown as NotificationOptions;
-        await reg.showNotification(title, swOptions);
-        sent = true;
+          data: {
+            milestoneDay,
+            url: new URL('?tab=milestones', reg.scope).toString(),
+          },
+        } as unknown as NotificationOptions);
+        return true;
       }
     }
 
-    // 3. Fallback to standard window Notification constructor if SW didn't fire
-    if (!sent) {
-      new Notification(title, {
-        body,
-        icon,
-        badge: icon,
-        tag: `milestone-${milestoneDay}`,
-      });
-      sent = true;
-    }
+    new Notification(title, {
+      body,
+      icon,
+      badge: icon,
+      tag: `milestone-${milestoneDay}`,
+    });
+    return true;
   } catch (err) {
     console.warn('Failed to display native system notification:', err);
+    return false;
   }
-
-  return sent;
 }
 
 /**
@@ -229,3 +212,4 @@ export function checkAndTriggerMilestones(
 
   return newlyHitMilestones;
 }
+

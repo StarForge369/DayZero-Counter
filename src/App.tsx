@@ -24,10 +24,13 @@ import {
 } from './utils/dateUtils';
 import {
   getOrCreateSyncKey,
+  setCustomSyncKey,
   pushDataToCloud,
   pullDataFromCloud,
   subscribeToRealTimeSync,
-  CANONICAL_SYNC_KEY,
+  savePendingSyncPayload,
+  getPendingSyncPayload,
+  clearPendingSyncPayload,
   CloudPayload,
 } from './utils/syncService';
 import {
@@ -194,7 +197,12 @@ export default function App() {
   }, [activeCounterId]);
 
   // Modals & Tabs
-  const [currentTab, setCurrentTab] = useState<string>('counter');
+  const [currentTab, setCurrentTab] = useState<string>(() => {
+    if (typeof window === 'undefined') return 'counter';
+    const requestedTab = new URLSearchParams(window.location.search).get('tab');
+    const validTabs = ['counter', 'habits', 'countdowns', 'calendar', 'milestones', 'calculator', 'notes'];
+    return validTabs.includes(requestedTab || '') ? requestedTab! : 'counter';
+  });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
@@ -217,6 +225,7 @@ export default function App() {
     isDarkMode,
     syncKey,
   });
+  const pendingCloudPushesRef = useRef(0);
   latestSyncStateRef.current = {
     counters,
     habits,
@@ -226,15 +235,22 @@ export default function App() {
     syncKey,
   };
 
+  useEffect(() => {
+    setLastSyncedAt(undefined);
+    setIsRealTimeConnected(false);
+  }, [syncKey]);
+
   // Immediate Cloud Push Function: scans all counters to preserve entire dataset
   const pushFullPayloadToCloud = useCallback(
     async (
       overrideCounters?: Counter[],
       overrideHabits?: Habit[],
       overrideCheckIns?: HabitCheckIn[],
-      overrideActiveId?: string
-    ) => {
+      overrideActiveId?: string,
+      overrideSyncKey?: string
+    ): Promise<boolean> => {
       const current = latestSyncStateRef.current;
+      const targetSyncKey = (overrideSyncKey || current.syncKey).toUpperCase();
       const targetCounters = Array.isArray(overrideCounters)
         ? overrideCounters
         : Array.isArray(current.counters) && current.counters.length > 0
@@ -287,15 +303,26 @@ export default function App() {
       payload.habits[targetActiveId] = targetHabits;
       payload.checkIns[targetActiveId] = targetCheckIns;
 
+      // Keep a local outbox so a reload during a network outage cannot cause
+      // the next cloud pull to replace edits that have not reached the server.
+      const pendingRaw = savePendingSyncPayload(targetSyncKey, payload);
       setIsSyncing(true);
+      pendingCloudPushesRef.current += 1;
       try {
-        const res = await pushDataToCloud(current.syncKey, payload);
+        const res = await pushDataToCloud(targetSyncKey, payload);
         if (res.success) {
-          setIsRealTimeConnected(true);
-          if (res.updatedAt) setLastSyncedAt(res.updatedAt);
+          if (pendingRaw) clearPendingSyncPayload(targetSyncKey, pendingRaw);
+          if (latestSyncStateRef.current.syncKey === targetSyncKey) {
+            setIsRealTimeConnected(true);
+            if (res.updatedAt) setLastSyncedAt(res.updatedAt);
+          }
+          return true;
         }
+        if (latestSyncStateRef.current.syncKey === targetSyncKey) setIsRealTimeConnected(false);
+        return false;
       } finally {
-        setIsSyncing(false);
+        pendingCloudPushesRef.current = Math.max(0, pendingCloudPushesRef.current - 1);
+        setIsSyncing(pendingCloudPushesRef.current > 0);
       }
     },
     []
@@ -410,6 +437,7 @@ export default function App() {
     const unsubscribe = subscribeToRealTimeSync(
       syncKey,
       (cloudData, updatedAt) => {
+        if (getPendingSyncPayload(syncKey)) return;
         applyCloudData(cloudData, updatedAt);
       },
       (connected) => {
@@ -423,18 +451,32 @@ export default function App() {
 
   // Periodic poll + Focus/Visibility refresh (e.g. when devices wake or unlock)
   useEffect(() => {
+    let disposed = false;
+    let isPulling = false;
+
     const refreshFromCloud = async () => {
-      const res = await pullDataFromCloud(syncKey);
-      if (res.success && res.data) {
-        setIsRealTimeConnected(true);
-        applyCloudData(res.data, res.updatedAt);
-      } else if (res.notFound && latestSyncStateRef.current.counters.length > 0) {
-        // A missing cloud entry is safe to heal from this device's local data.
-        pushFullPayloadToCloud();
-      } else if (!res.success) {
-        setIsRealTimeConnected(false);
-      } else {
-        setIsRealTimeConnected(true);
+      if (disposed || isPulling) return;
+      isPulling = true;
+      try {
+        if (getPendingSyncPayload(syncKey)) {
+          await pushFullPayloadToCloud();
+          return;
+        }
+        const res = await pullDataFromCloud(syncKey);
+        if (disposed) return;
+        if (res.success && res.data) {
+          setIsRealTimeConnected(true);
+          applyCloudData(res.data, res.updatedAt);
+        } else if (res.notFound && latestSyncStateRef.current.counters.length > 0) {
+          // A missing cloud entry is safe to heal from this device's local data.
+          pushFullPayloadToCloud();
+        } else if (!res.success) {
+          setIsRealTimeConnected(false);
+        } else {
+          setIsRealTimeConnected(true);
+        }
+      } finally {
+        isPulling = false;
       }
     };
 
@@ -453,11 +495,52 @@ export default function App() {
     window.addEventListener('focus', handleVisibility);
 
     return () => {
+      disposed = true;
       clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleVisibility);
     };
   }, [syncKey, applyCloudData, pushFullPayloadToCloud]);
+
+  const handleConnectSyncKey = useCallback(async (
+    requestedKey: string
+  ): Promise<'loaded' | 'created' | 'failed'> => {
+    const targetKey = requestedKey.trim().toUpperCase();
+    const pending = getPendingSyncPayload(targetKey);
+
+    // If this browser already has unsent edits for this key, preserve and send
+    // those before considering a server copy.
+    if (pending) {
+      const saved = await pushDataToCloud(targetKey, pending.payload);
+      if (!saved.success) return 'failed';
+      clearPendingSyncPayload(targetKey, pending.raw);
+      setCustomSyncKey(targetKey);
+      setSyncKey(targetKey);
+      applyCloudData(pending.payload, saved.updatedAt);
+      setIsRealTimeConnected(true);
+      if (saved.updatedAt) setLastSyncedAt(saved.updatedAt);
+      return 'created';
+    }
+
+    const result = await pullDataFromCloud(targetKey);
+    if (result.success && result.data) {
+      setCustomSyncKey(targetKey);
+      setSyncKey(targetKey);
+      applyCloudData(result.data, result.updatedAt);
+      setIsRealTimeConnected(true);
+      return 'loaded';
+    }
+
+    if (result.notFound) {
+      setCustomSyncKey(targetKey);
+      setSyncKey(targetKey);
+      setLastSyncedAt(undefined);
+      const saved = await pushFullPayloadToCloud(undefined, undefined, undefined, undefined, targetKey);
+      return saved ? 'created' : 'failed';
+    }
+
+    return 'failed';
+  }, [applyCloudData, pushFullPayloadToCloud]);
 
   // Listen for local mutations (notes, milestones, countdowns) and push immediately
   useEffect(() => {
@@ -741,6 +824,7 @@ export default function App() {
         {/* Tab content rendering */}
         {currentTab === 'counter' && (
           <PrimaryHeroCounter
+            key={activeCounter.id}
             counter={activeCounter}
             onEdit={handleEditActiveCounter}
             onResetToToday={handleResetToToday}
@@ -757,6 +841,7 @@ export default function App() {
 
         {currentTab === 'habits' && (
           <HabitTracker
+            key={activeCounter.id}
             counter={activeCounter}
             habits={habits}
             checkIns={checkIns}
@@ -768,11 +853,12 @@ export default function App() {
         )}
 
         {currentTab === 'countdowns' && (
-          <TargetEvents counter={activeCounter} soundEnabled={soundEnabled} />
+          <TargetEvents key={activeCounter.id} counter={activeCounter} soundEnabled={soundEnabled} />
         )}
 
         {currentTab === 'calendar' && (
           <CalendarMatrix
+            key={activeCounter.id}
             counter={activeCounter}
             onSelectDayForNote={handleSelectDayForNote}
             soundEnabled={soundEnabled}
@@ -780,15 +866,16 @@ export default function App() {
         )}
 
         {currentTab === 'milestones' && (
-          <MilestonesSection counter={activeCounter} />
+          <MilestonesSection key={activeCounter.id} counter={activeCounter} />
         )}
 
         {currentTab === 'calculator' && (
-          <DateCalculator counter={activeCounter} soundEnabled={soundEnabled} />
+          <DateCalculator key={activeCounter.id} counter={activeCounter} soundEnabled={soundEnabled} />
         )}
 
         {currentTab === 'notes' && (
           <DailyJournal
+            key={activeCounter.id}
             counter={activeCounter}
             initialDay={journalInitialDay}
             initialDateStr={journalInitialDateStr}
@@ -872,9 +959,10 @@ export default function App() {
         isOpen={isCloudSyncModalOpen}
         onClose={() => setIsCloudSyncModalOpen(false)}
         syncKey={syncKey}
-        onSyncKeyChange={(newKey) => setSyncKey(newKey)}
-        onTriggerSyncNow={() => pushFullPayloadToCloud()}
+        onConnectSyncKey={handleConnectSyncKey}
+        onTriggerSyncNow={async () => { await pushFullPayloadToCloud(); }}
         lastSyncedAt={lastSyncedAt}
+        isConnected={isRealTimeConnected}
         isSyncing={isSyncing}
         soundEnabled={soundEnabled}
       />
@@ -892,3 +980,4 @@ export default function App() {
     </div>
   );
 }
+

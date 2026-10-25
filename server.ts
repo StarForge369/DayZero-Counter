@@ -7,11 +7,17 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = 3000;
-const DATA_DIR = path.join(__dirname, 'data');
+const PORT = Number(process.env.PORT) || 3000;
+const DATA_DIR = process.env.SYNC_DATA_DIR
+  ? path.resolve(process.env.SYNC_DATA_DIR)
+  : path.join(__dirname, 'data');
 const SYNC_FILE = path.join(DATA_DIR, 'sync-store.json');
 
-const CANONICAL_PRIMARY_KEY = 'DAYZERO_PRIMARY';
+function normalizeSyncKey(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const key = value.trim().toUpperCase();
+  return /^[A-Z0-9_-]{3,64}$/.test(key) ? key : null;
+}
 
 // Ensure data directory and storage file exist
 if (!fs.existsSync(DATA_DIR)) {
@@ -30,11 +36,16 @@ function readSyncStore(): Record<string, any> {
   }
 }
 
-function writeSyncStore(data: Record<string, any>) {
+function writeSyncStore(data: Record<string, any>): boolean {
+  const tempFile = `${SYNC_FILE}.tmp`;
   try {
-    fs.writeFileSync(SYNC_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    fs.writeFileSync(tempFile, JSON.stringify(data, null, 2), 'utf-8');
+    fs.renameSync(tempFile, SYNC_FILE);
+    return true;
   } catch (err) {
     console.error('Failed to write sync store:', err);
+    try { fs.rmSync(tempFile, { force: true }); } catch {}
+    return false;
   }
 }
 
@@ -76,31 +87,22 @@ async function startServer() {
   });
   app.use(express.json({ limit: '15mb' }));
 
-  // Helper to find the freshest data across keys (e.g. DAYZERO_PRIMARY or user keys like DAY-1398)
-  const getLatestEntry = (requestedKey?: string) => {
+  // Each sync code is an isolated namespace; never return another key's data.
+  const getLatestEntry = (requestedKey: string) => {
     const store = readSyncStore();
-    const primary = store[CANONICAL_PRIMARY_KEY];
-    if (requestedKey) {
-      const specific = store[requestedKey.toUpperCase()];
-      if (specific && primary) {
-        const timeSpec = new Date(specific.updatedAt || 0).getTime();
-        const timePrim = new Date(primary.updatedAt || 0).getTime();
-        return timeSpec >= timePrim ? specific : primary;
-      }
-      if (specific) return specific;
-    }
-    return primary || null;
+    const key = normalizeSyncKey(requestedKey);
+    return key ? store[key] || null : null;
   };
 
   // API Route: Real-time Server-Sent Events (SSE) stream for instant sync
   app.get('/api/sync/stream/:syncKey', (req, res) => {
-    const syncKey = (req.params.syncKey || CANONICAL_PRIMARY_KEY).toUpperCase();
+    const syncKey = normalizeSyncKey(req.params.syncKey);
+    if (!syncKey) return res.status(400).json({ error: 'Invalid sync key' });
 
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
     });
 
     if (!sseClients.has(syncKey)) {
@@ -108,14 +110,6 @@ async function startServer() {
     }
     const clients = sseClients.get(syncKey)!;
     clients.add(res);
-
-    // Also register on CANONICAL_PRIMARY_KEY if different, so cross-device broadcasts always reach it
-    if (syncKey !== CANONICAL_PRIMARY_KEY) {
-      if (!sseClients.has(CANONICAL_PRIMARY_KEY)) {
-        sseClients.set(CANONICAL_PRIMARY_KEY, new Set());
-      }
-      sseClients.get(CANONICAL_PRIMARY_KEY)!.add(res);
-    }
 
     // Send latest available state immediately on connection
     const entry = getLatestEntry(syncKey);
@@ -138,24 +132,17 @@ async function startServer() {
       if (clients.size === 0) {
         sseClients.delete(syncKey);
       }
-      if (syncKey !== CANONICAL_PRIMARY_KEY) {
-        const primClients = sseClients.get(CANONICAL_PRIMARY_KEY);
-        if (primClients) {
-          primClients.delete(res);
-          if (primClients.size === 0) sseClients.delete(CANONICAL_PRIMARY_KEY);
-        }
-      }
     });
   });
 
   // API Route: Save sync data & instantly broadcast to all listening devices
   app.post('/api/sync/save', (req, res) => {
     const { syncKey, data } = req.body;
-    if (!data) {
-      return res.status(400).json({ error: 'Missing sync data' });
+    const key = normalizeSyncKey(syncKey);
+    if (!key || !data || typeof data !== 'object' || !Array.isArray(data.counters) || data.counters.length === 0) {
+      return res.status(400).json({ error: 'Invalid sync key or payload' });
     }
 
-    const key = (syncKey || CANONICAL_PRIMARY_KEY).toUpperCase();
     const store = readSyncStore();
     const now = new Date().toISOString();
     const payload = {
@@ -163,23 +150,20 @@ async function startServer() {
       updatedAt: now,
     };
 
-    // Store under the user's syncKey AND mirror to CANONICAL_PRIMARY_KEY
+    // Store each device group under its own key; do not merge users into a global bucket.
     store[key] = payload;
-    store[CANONICAL_PRIMARY_KEY] = payload;
-    writeSyncStore(store);
+    if (!writeSyncStore(store)) return res.status(500).json({ error: 'Failed to persist sync data' });
 
-    // Instant Real-Time Broadcast to devices listening to this key and/or CANONICAL_PRIMARY_KEY
+    // Instant real-time broadcast to devices using this exact key.
     broadcastToClients(key, payload);
-    if (key !== CANONICAL_PRIMARY_KEY) {
-      broadcastToClients(CANONICAL_PRIMARY_KEY, payload);
-    }
 
     return res.json({ success: true, updatedAt: now });
   });
 
   // API Route: Load sync data for a specific sync key
   app.get('/api/sync/load/:syncKey', (req, res) => {
-    const syncKey = (req.params.syncKey || CANONICAL_PRIMARY_KEY).toUpperCase();
+    const syncKey = normalizeSyncKey(req.params.syncKey);
+    if (!syncKey) return res.status(400).json({ error: 'Invalid sync key' });
     const entry = getLatestEntry(syncKey);
 
     if (!entry) {
@@ -221,3 +205,4 @@ async function startServer() {
 startServer().catch((err) => {
   console.error('Server startup error:', err);
 });
+

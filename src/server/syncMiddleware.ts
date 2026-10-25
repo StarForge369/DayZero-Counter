@@ -2,9 +2,25 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import fs from 'fs';
 import path from 'path';
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
+const DATA_DIR = process.env.SYNC_DATA_DIR
+  ? path.resolve(process.env.SYNC_DATA_DIR)
+  : path.resolve(process.cwd(), 'data');
 const SYNC_FILE = path.join(DATA_DIR, 'sync-store.json');
-const PRIMARY_SYNC_KEY = 'DAYZERO_PRIMARY';
+const ALLOWED_FRONTEND_ORIGIN = 'https://starforge369.github.io';
+
+function normalizeSyncKey(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const key = value.trim().toUpperCase();
+  return /^[A-Z0-9_-]{3,64}$/.test(key) ? key : null;
+}
+
+function decodeSyncKey(value: string): string | null {
+  try {
+    return normalizeSyncKey(decodeURIComponent(value));
+  } catch {
+    return null;
+  }
+}
 
 // Ensure data directory and storage file exist
 if (!fs.existsSync(DATA_DIR)) {
@@ -23,11 +39,16 @@ export function readSyncStore(): Record<string, any> {
   }
 }
 
-export function writeSyncStore(data: Record<string, any>) {
+export function writeSyncStore(data: Record<string, any>): boolean {
+  const tempFile = `${SYNC_FILE}.tmp`;
   try {
-    fs.writeFileSync(SYNC_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    fs.writeFileSync(tempFile, JSON.stringify(data, null, 2), 'utf-8');
+    fs.renameSync(tempFile, SYNC_FILE);
+    return true;
   } catch (err) {
     console.error('Failed to write sync store:', err);
+    try { fs.rmSync(tempFile, { force: true }); } catch {}
+    return false;
   }
 }
 
@@ -35,22 +56,15 @@ export function writeSyncStore(data: Record<string, any>) {
 const sseClients: Map<string, Set<ServerResponse>> = new Map();
 
 export function broadcastToClients(syncKey: string, payload: any) {
-  const normalizedKey = (syncKey || PRIMARY_SYNC_KEY).toUpperCase();
-  const keysToBroadcast = [normalizedKey];
-  if (normalizedKey !== PRIMARY_SYNC_KEY) {
-    keysToBroadcast.push(PRIMARY_SYNC_KEY);
-  }
-
-  for (const k of keysToBroadcast) {
-    const clients = sseClients.get(k);
-    if (clients && clients.size > 0) {
-      const dataStr = `data: ${JSON.stringify(payload)}\n\n`;
-      for (const client of clients) {
-        try {
-          client.write(dataStr);
-        } catch {
-          clients.delete(client);
-        }
+  const normalizedKey = (syncKey || '').toUpperCase();
+  const clients = sseClients.get(normalizedKey);
+  if (clients && clients.size > 0) {
+    const dataStr = `data: ${JSON.stringify(payload)}\n\n`;
+    for (const client of clients) {
+      try {
+        client.write(dataStr);
+      } catch {
+        clients.delete(client);
       }
     }
   }
@@ -58,18 +72,36 @@ export function broadcastToClients(syncKey: string, payload: any) {
 
 export function handleSyncApi(req: IncomingMessage, res: ServerResponse, next: () => void) {
   const url = req.url || '';
+  const pathname = url.split('?')[0];
+  const origin = req.headers.origin;
+
+  if (origin === ALLOWED_FRONTEND_ORIGIN) {
+    res.setHeader('Access-Control-Allow-Origin', ALLOWED_FRONTEND_ORIGIN);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Vary', 'Origin');
+  }
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
 
   // 1. SSE Stream: /api/sync/stream/:syncKey
-  if (url.startsWith('/api/sync/stream')) {
-    const parts = url.split('/');
-    const rawKey = parts[4]?.split('?')[0];
-    const syncKey = (rawKey || PRIMARY_SYNC_KEY).toUpperCase();
+  if (pathname.startsWith('/api/sync/stream/')) {
+    const rawKey = pathname.slice('/api/sync/stream/'.length);
+    const syncKey = decodeSyncKey(rawKey);
+    if (!syncKey) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid sync key' }));
+      return;
+    }
 
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
     });
 
     if (!sseClients.has(syncKey)) {
@@ -78,9 +110,9 @@ export function handleSyncApi(req: IncomingMessage, res: ServerResponse, next: (
     const clients = sseClients.get(syncKey)!;
     clients.add(res);
 
-    // Send immediate initial state
+    // Send only this key's state; never fall back to a shared global record.
     const store = readSyncStore();
-    const entry = store[syncKey] || store[PRIMARY_SYNC_KEY];
+    const entry = store[syncKey];
     if (entry) {
       res.write(`data: ${JSON.stringify(entry)}\n\n`);
     }
@@ -105,23 +137,31 @@ export function handleSyncApi(req: IncomingMessage, res: ServerResponse, next: (
   }
 
   // 2. Save Data: POST /api/sync/save
-  if (url === '/api/sync/save' && req.method === 'POST') {
+  if (pathname === '/api/sync/save' && req.method === 'POST') {
     let body = '';
+    let tooLarge = false;
     req.on('data', (chunk) => {
+      if (tooLarge) return;
       body += chunk;
+      if (Buffer.byteLength(body, 'utf8') > 15 * 1024 * 1024) {
+        tooLarge = true;
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sync payload is too large' }));
+      }
     });
 
     req.on('end', () => {
+      if (tooLarge) return;
       try {
         const parsed = JSON.parse(body);
         const { syncKey, data } = parsed;
-        if (!data) {
+        const key = normalizeSyncKey(syncKey);
+        if (!key || !data || typeof data !== 'object' || !Array.isArray(data.counters) || data.counters.length === 0) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Missing data' }));
+          res.end(JSON.stringify({ error: 'Invalid sync key or payload' }));
           return;
         }
 
-        const key = (syncKey || PRIMARY_SYNC_KEY).toUpperCase();
         const store = readSyncStore();
         const entry = {
           data,
@@ -129,13 +169,16 @@ export function handleSyncApi(req: IncomingMessage, res: ServerResponse, next: (
         };
 
         store[key] = entry;
-        store[PRIMARY_SYNC_KEY] = entry;
-        writeSyncStore(store);
+        if (!writeSyncStore(store)) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Failed to persist sync data' }));
+          return;
+        }
 
-        // Instant broadcast
+        // Notify only devices using this exact sync key.
         broadcastToClients(key, entry);
 
-        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, updatedAt: entry.updatedAt }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -146,28 +189,32 @@ export function handleSyncApi(req: IncomingMessage, res: ServerResponse, next: (
   }
 
   // 3. Load Data: GET /api/sync/load/:syncKey
-  if (url.startsWith('/api/sync/load')) {
-    const parts = url.split('/');
-    const rawKey = parts[4]?.split('?')[0];
-    const syncKey = (rawKey || PRIMARY_SYNC_KEY).toUpperCase();
+  if (pathname.startsWith('/api/sync/load/')) {
+    const rawKey = pathname.slice('/api/sync/load/'.length);
+    const syncKey = decodeSyncKey(rawKey);
+    if (!syncKey) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid sync key' }));
+      return;
+    }
 
     const store = readSyncStore();
-    const entry = store[syncKey] || store[PRIMARY_SYNC_KEY];
+    const entry = store[syncKey];
 
     if (!entry) {
-      res.writeHead(404, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Sync data not found' }));
       return;
     }
 
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true, data: entry.data, updatedAt: entry.updatedAt }));
     return;
   }
 
   // 4. Health Check: GET /api/health
-  if (url === '/api/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+  if (pathname === '/api/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }));
     return;
   }
@@ -175,3 +222,4 @@ export function handleSyncApi(req: IncomingMessage, res: ServerResponse, next: (
   // Delegate all other routes to Vite
   next();
 }
+
