@@ -45,3 +45,16 @@ export interface TargetEvent {
   category?: string;
   createdAt: string;
 }
+
+/** Full user dataset synced between devices. */
+export interface CloudPayload {
+  counters: Counter[];
+  activeCounterId: string;
+  notes: Record<string, DayNote[]>;
+  milestones: Record<string, Milestone[]>;
+  habits: Record<string, Habit[]>;
+  checkIns: Record<string, HabitCheckIn[]>;
+  targetEvents: Record<string, TargetEvent[]>;
+  notifiedMilestones: Record<string, number[]>;
+  themeMode: 'dark' | 'light';
+}

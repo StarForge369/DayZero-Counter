@@ -11,6 +11,7 @@ import {
   getDateForDayNumber,
   toLocalDateString,
   toLocalTimeString,
+  parseLocalDateString,
   playHapticSound,
 } from '../utils/dateUtils';
 import {
@@ -151,7 +152,7 @@ export const PrimaryHeroCounter: React.FC<PrimaryHeroCounterProps> = ({
 
           {/* Metadata system badge */}
           <div className="flex flex-wrap items-center justify-center gap-2 text-xs font-mono font-medium text-stone-500 dark:text-stone-400 mb-3 bg-stone-100 dark:bg-stone-800/80 px-3.5 py-1.5 rounded-full border border-stone-200 dark:border-stone-700/60">
-            <span>Origin: {formatDDMMYYYY(new Date(counter.startDate))} ({format12HourTime(counter.startTime)}) = Day 0</span>
+            <span>Origin: {formatDDMMYYYY(parseLocalDateString(counter.startDate))} ({format12HourTime(counter.startTime)}) = Day 0</span>
             <span aria-hidden="true">·</span>
             <span>
               {formatDDMMYYYY(getDateForDayNumber(counter.startDate, 1))} = Day 1

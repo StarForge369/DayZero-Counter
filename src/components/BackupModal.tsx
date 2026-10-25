@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, Download, Upload, Check, AlertCircle, FileCheck, History } from 'lucide-react';
-import { playHapticSound, toLocalDateString } from '../utils/dateUtils';
+import { isValidDateString, playHapticSound, toLocalDateString } from '../utils/dateUtils';
 import { Counter } from '../types';
 
 interface BackupModalProps {
@@ -56,6 +56,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
         key === 'theme_mode' ||
         key === 'dayzero_cloud_synckey'
       ) {
+        if (key.startsWith('dayzero_sync_pending_')) continue;
         const raw = localStorage.getItem(key);
         if (raw !== null) {
           try {
@@ -169,7 +170,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
           // 4. Extract any flat keys from legacy formats
           Object.keys(source).forEach((k) => {
             if (
-              k.startsWith('dayzero_') ||
+              (k.startsWith('dayzero_') && !k.startsWith('dayzero_sync_pending_')) ||
               k.startsWith('habits_') ||
               k.startsWith('habit_checkins_') ||
               k.startsWith('notes_') ||
@@ -196,7 +197,23 @@ export const BackupModal: React.FC<BackupModalProps> = ({
           storageToWrite['dayzero_active_id_v5'] = parsedActiveId;
         }
 
-        // DEEP RESTORE: Clean old dayzero keys to prevent stale orphan records
+        if (
+          parsedCounters.length === 0 ||
+          parsedCounters.some((counter) =>
+            !counter || typeof counter.id !== 'string' || !counter.id ||
+            typeof counter.title !== 'string' || !isValidDateString(counter.startDate) ||
+            typeof counter.createdAt !== 'string',
+          )
+        ) {
+          throw new Error('Backup does not contain valid counters. Your current data has not been changed.');
+        }
+        if (!parsedCounters.some((counter) => counter.id === parsedActiveId)) {
+          parsedActiveId = parsedCounters[0].id;
+        }
+        storageToWrite['dayzero_counters_v5'] = JSON.stringify(parsedCounters);
+        storageToWrite['dayzero_active_id_v5'] = parsedActiveId;
+
+        // Stage the full replacement so a quota or storage error can roll it back.
         const keysToRemove: string[] = [];
         for (let i = 0; i < localStorage.length; i++) {
           const key = localStorage.key(i);
@@ -212,12 +229,23 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             keysToRemove.push(key);
           }
         }
-        keysToRemove.forEach((k) => localStorage.removeItem(k));
-
-        // Write all normalized backup entries into localStorage
-        Object.keys(storageToWrite).forEach((k) => {
-          localStorage.setItem(k, storageToWrite[k]);
-        });
+        const originalValues = new Map<string, string | null>();
+        for (const key of keysToRemove) originalValues.set(key, localStorage.getItem(key));
+        for (const key of Object.keys(storageToWrite)) {
+          if (!originalValues.has(key)) originalValues.set(key, localStorage.getItem(key));
+        }
+        try {
+          keysToRemove.forEach((key) => localStorage.removeItem(key));
+          Object.entries(storageToWrite).forEach(([key, value]) => localStorage.setItem(key, value));
+        } catch (error) {
+          for (const [key, value] of originalValues) {
+            try {
+              if (value === null) localStorage.removeItem(key);
+              else localStorage.setItem(key, value);
+            } catch {}
+          }
+          throw error;
+        }
 
         if (soundEnabled) playHapticSound('celebrate');
         setImportStatus('Backup verified and restored cleanly!');

@@ -1,5 +1,6 @@
 import { Counter, Milestone } from '../types';
 import { playHapticSound, getCalendarDaysElapsed, STANDARD_MILESTONES } from './dateUtils';
+import { getNotifiedMilestones, markMilestoneNotified } from './notificationUtils';
 
 let swRegistration: ServiceWorkerRegistration | null = null;
 
@@ -169,15 +170,7 @@ export function checkAndTriggerMilestones(
   if (typeof window === 'undefined') return [];
 
   const currentDay = getCalendarDaysElapsed(counter.startDate, new Date());
-  const storageKey = `notified_milestones_${counter.id}`;
-
-  let notifiedDays: number[] = [];
-  try {
-    const saved = localStorage.getItem(storageKey);
-    if (saved) {
-      notifiedDays = JSON.parse(saved);
-    }
-  } catch {}
+  const notifiedDays = getNotifiedMilestones(counter.id);
 
   const milestones = getAllMilestonesForCounter(counter.id);
   const newlyHitMilestones: Milestone[] = [];
@@ -187,6 +180,7 @@ export function checkAndTriggerMilestones(
     if (currentDay >= milestone.day && !notifiedDays.includes(milestone.day)) {
       newlyHitMilestones.push(milestone);
       notifiedDays.push(milestone.day);
+      markMilestoneNotified(counter.id, milestone.day);
 
       // Trigger browser/service-worker notification if permitted
       if ('Notification' in window && Notification.permission === 'granted') {
@@ -202,12 +196,6 @@ export function checkAndTriggerMilestones(
         onInAppCelebration(milestone);
       }
     }
-  }
-
-  if (newlyHitMilestones.length > 0) {
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(notifiedDays));
-    } catch {}
   }
 
   return newlyHitMilestones;

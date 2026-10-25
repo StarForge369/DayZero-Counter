@@ -8,6 +8,8 @@ import {
   formatReadableDate,
   toLocalDateString,
   playHapticSound,
+  isValidDateString,
+  parseLocalDateString,
 } from '../utils/dateUtils';
 import { Calculator, CalendarDays } from 'lucide-react';
 
@@ -31,7 +33,9 @@ export const DateCalculator: React.FC<DateCalculatorProps> = ({
   const [inputDayNum, setInputDayNum] = useState<number>(30);
 
   // Calculations for Mode 1
-  const calculatedDate = new Date(`${inputDateStr}T00:00:00`);
+  const calculatedDate = isValidDateString(inputDateStr)
+    ? parseLocalDateString(inputDateStr)
+    : new Date(Number.NaN);
   const calculatedDayNumber = getCalendarDaysElapsed(counter.startDate, calculatedDate);
   const currentTodayDay = getCalendarDaysElapsed(counter.startDate, new Date());
 
@@ -200,7 +204,7 @@ export const DateCalculator: React.FC<DateCalculatorProps> = ({
                   <span>Status:</span>
                   <span className="font-medium text-stone-900 dark:text-stone-100">
                     {calculatedDayNumber === 0 && 'Exact Origin Date (Day 0)'}
-                    {calculatedDayNumber === 1 && `Day One (${formatDDMMYYYY(new Date(day1Str))})`}
+                    {calculatedDayNumber === 1 && `Day One (${formatDDMMYYYY(parseLocalDateString(day1Str))})`}
                     {calculatedDayNumber > 1 && `${calculatedDayNumber} days after Day 0`}
                     {calculatedDayNumber < 0 && `${Math.abs(calculatedDayNumber)} days before Day 0`}
                   </span>

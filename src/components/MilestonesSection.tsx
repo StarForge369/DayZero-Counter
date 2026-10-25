@@ -29,6 +29,7 @@ import {
   triggerMilestoneNotification,
   getAllMilestonesForCounter,
 } from '../utils/notificationService';
+import { resetNotifiedMilestones } from '../utils/notificationUtils';
 import { notifyLocalStateChanged } from '../utils/syncService';
 
 interface MilestonesSectionProps {
@@ -164,7 +165,7 @@ export const MilestonesSection: React.FC<MilestonesSectionProps> = ({
 
   const handleResetNotifiedHistory = () => {
     playHapticSound('click');
-    localStorage.removeItem(`notified_milestones_${counter.id}`);
+    resetNotifiedMilestones(counter.id);
     setAlertFeedback('Milestone alert history reset. Milestones will trigger alert anew.');
     setTimeout(() => setAlertFeedback(null), 3000);
   };

@@ -1,0 +1,70 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function validSpaceId(spaceId) {
+      return spaceId.matches('^[a-f0-9]{64}$');
+    }
+
+    function spacePath(spaceId) {
+      return /databases/$(database)/documents/syncSpaces/$(spaceId);
+    }
+
+    match /syncSpaces/{spaceId} {
+      allow get: if signedIn() && validSpaceId(spaceId);
+      allow list, delete: if false;
+      allow create: if signedIn()
+        && validSpaceId(spaceId)
+        && request.resource.data.keys().hasOnly(['revision', 'chunkCount', 'byteLength', 'updatedAt'])
+        && request.resource.data.revision == 1
+        && request.resource.data.chunkCount is int
+        && request.resource.data.chunkCount >= 1
+        && request.resource.data.chunkCount <= 64
+        && request.resource.data.byteLength is int
+        && request.resource.data.byteLength > 0
+        && request.resource.data.byteLength <= 15728640
+        && request.resource.data.updatedAt is timestamp;
+      allow update: if signedIn()
+        && validSpaceId(spaceId)
+        && request.resource.data.keys().hasOnly(['revision', 'chunkCount', 'byteLength', 'updatedAt'])
+        && request.resource.data.revision == resource.data.revision + 1
+        && request.resource.data.chunkCount is int
+        && request.resource.data.chunkCount >= 1
+        && request.resource.data.chunkCount <= 64
+        && request.resource.data.byteLength is int
+        && request.resource.data.byteLength > 0
+        && request.resource.data.byteLength <= 15728640
+        && request.resource.data.updatedAt is timestamp;
+
+      match /chunks/{chunkId} {
+        function validChunk() {
+          return request.resource.data.keys().hasOnly(['index', 'data'])
+            && request.resource.data.index is int
+            && request.resource.data.index >= 0
+            && request.resource.data.index < getAfter(spacePath(spaceId)).data.chunkCount
+            && request.resource.data.data is string
+            && request.resource.data.data.size() <= 327680;
+        }
+
+        allow get, list: if signedIn()
+          && validSpaceId(spaceId)
+          && chunkId.matches('^chunk_[0-9]{4}$')
+          && exists(spacePath(spaceId));
+        allow create, update: if signedIn()
+          && validSpaceId(spaceId)
+          && chunkId.matches('^chunk_[0-9]{4}$')
+          && existsAfter(spacePath(spaceId))
+          && validChunk();
+        allow delete: if signedIn()
+          && validSpaceId(spaceId)
+          && chunkId.matches('^chunk_[0-9]{4}$')
+          && existsAfter(spacePath(spaceId))
+          && resource.data.index >= getAfter(spacePath(spaceId)).data.chunkCount;
+      }
+    }
+  }
+}

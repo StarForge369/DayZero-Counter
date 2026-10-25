@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Counter, TargetEvent } from '../types';
 import {
   getCalendarDaysElapsed,
@@ -8,6 +8,7 @@ import {
   formatFullDate,
   toLocalDateString,
   playHapticSound,
+  parseLocalDateString,
 } from '../utils/dateUtils';
 import {
   Timer,
@@ -61,11 +62,13 @@ export const TargetEvents: React.FC<TargetEventsProps> = ({
       const saved = localStorage.getItem(`target_events_${counter.id}`);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) return parsed;
       }
     } catch {}
     return DEFAULT_TARGET_EVENTS.map((e) => ({ ...e, counterId: counter.id }));
   });
+  const hasMountedPersistenceRef = useRef(false);
+  const skipNextPersistenceRef = useRef(false);
 
   const [newEventTitle, setNewEventTitle] = useState('');
   const [newEventDate, setNewEventDate] = useState('');
@@ -83,8 +86,17 @@ export const TargetEvents: React.FC<TargetEventsProps> = ({
     const reload = () => {
       try {
         const saved = localStorage.getItem(`target_events_${counter.id}`);
-        if (saved) setEvents(JSON.parse(saved));
-      } catch {}
+        skipNextPersistenceRef.current = true;
+        if (saved !== null) {
+          const parsed = JSON.parse(saved);
+          setEvents(Array.isArray(parsed) ? parsed : DEFAULT_TARGET_EVENTS.map((event) => ({ ...event, counterId: counter.id })));
+        } else {
+          setEvents(DEFAULT_TARGET_EVENTS.map((event) => ({ ...event, counterId: counter.id })));
+        }
+      } catch {
+        skipNextPersistenceRef.current = true;
+        setEvents(DEFAULT_TARGET_EVENTS.map((event) => ({ ...event, counterId: counter.id })));
+      }
     };
     reload();
     window.addEventListener('dayzero_data_synced', reload);
@@ -92,9 +104,24 @@ export const TargetEvents: React.FC<TargetEventsProps> = ({
   }, [counter.id]);
 
   useEffect(() => {
+    if (!hasMountedPersistenceRef.current) {
+      hasMountedPersistenceRef.current = true;
+      return;
+    }
+    if (skipNextPersistenceRef.current) {
+      skipNextPersistenceRef.current = false;
+      return;
+    }
     try {
-      localStorage.setItem(`target_events_${counter.id}`, JSON.stringify(events));
-    } catch {}
+      const key = `target_events_${counter.id}`;
+      const serialized = JSON.stringify(events);
+      if (localStorage.getItem(key) !== serialized) {
+        localStorage.setItem(key, serialized);
+        notifyLocalStateChanged();
+      }
+    } catch (error) {
+      console.error('Failed to persist target events:', error);
+    }
   }, [events, counter.id]);
 
   const handleAddEvent = (e: React.FormEvent) => {
@@ -112,8 +139,6 @@ export const TargetEvents: React.FC<TargetEventsProps> = ({
     };
     const updated = [...events, newEvt];
     setEvents(updated);
-    localStorage.setItem(`target_events_${counter.id}`, JSON.stringify(updated));
-    notifyLocalStateChanged();
     setNewEventTitle('');
     setNewEventDate('');
     setShowAddForm(false);
@@ -123,8 +148,6 @@ export const TargetEvents: React.FC<TargetEventsProps> = ({
     if (soundEnabled) playHapticSound('click');
     const updated = events.filter((e) => e.id !== id);
     setEvents(updated);
-    localStorage.setItem(`target_events_${counter.id}`, JSON.stringify(updated));
-    notifyLocalStateChanged();
   };
 
   const currentDay = getCalendarDaysElapsed(counter.startDate, new Date());
@@ -218,10 +241,10 @@ export const TargetEvents: React.FC<TargetEventsProps> = ({
 
       {/* Countdown Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {events
-          .sort((a, b) => new Date(a.targetDate).getTime() - new Date(b.targetDate).getTime())
+        {[...events]
+          .sort((a, b) => parseLocalDateString(a.targetDate).getTime() - parseLocalDateString(b.targetDate).getTime())
           .map((evt) => {
-            const targetDateObj = new Date(`${evt.targetDate}T00:00:00`);
+            const targetDateObj = parseLocalDateString(evt.targetDate);
             const targetDayNumber = getCalendarDaysElapsed(counter.startDate, targetDateObj);
             const daysLeft = targetDayNumber - currentDay;
 

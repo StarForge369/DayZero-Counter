@@ -64,13 +64,26 @@ export const HabitTracker: React.FC<HabitTrackerProps> = ({
     setShowAddForm(false);
   };
 
+  const checkedDaysByHabit = new Map<string, Set<number>>();
+  const completedDays = new Set<number>();
+  const activeHabitIds = new Set(habits.map((habit) => habit.id));
+  for (const checkIn of checkIns) {
+    if (!activeHabitIds.has(checkIn.habitId)) continue;
+    let checkedDays = checkedDaysByHabit.get(checkIn.habitId);
+    if (!checkedDays) {
+      checkedDays = new Set<number>();
+      checkedDaysByHabit.set(checkIn.habitId, checkedDays);
+    }
+    checkedDays.add(checkIn.dayNumber);
+    completedDays.add(checkIn.dayNumber);
+  }
+
   // Streak calculation for a specific habit
   const getHabitStreak = (habitId: string) => {
     let streak = 0;
     let day = currentDay;
     while (day >= 0) {
-      const d = toLocalDateString(getDateForDayNumber(counter.startDate, day));
-      const hasChecked = checkIns.some((c) => c.habitId === habitId && c.dateStr === d);
+      const hasChecked = checkedDaysByHabit.get(habitId)?.has(day) || false;
       if (hasChecked) {
         streak++;
         day--;
@@ -86,8 +99,8 @@ export const HabitTracker: React.FC<HabitTrackerProps> = ({
   };
 
   // Daily completion for selected day
-  const completedTodayCount = habits.filter((h) =>
-    checkIns.some((c) => c.habitId === h.id && c.dateStr === selectedDateStr)
+  const completedTodayCount = habits.filter((habit) =>
+    checkedDaysByHabit.get(habit.id)?.has(selectedDayNumber),
   ).length;
 
   const totalHabits = habits.length;
@@ -96,10 +109,7 @@ export const HabitTracker: React.FC<HabitTrackerProps> = ({
   // Active overall streak (days with at least 1 habit completed)
   let overallStreak = 0;
   for (let d = currentDay; d >= 0; d--) {
-    const dStr = toLocalDateString(getDateForDayNumber(counter.startDate, d));
-    const anyDone = habits.some((h) =>
-      checkIns.some((c) => c.habitId === h.id && c.dateStr === dStr)
-    );
+    const anyDone = completedDays.has(d);
     if (anyDone) {
       overallStreak++;
     } else {
@@ -110,7 +120,9 @@ export const HabitTracker: React.FC<HabitTrackerProps> = ({
 
   // Days list for activity strip (up to last 7 days from Day 0)
   const minDay = Math.max(0, currentDay - 6);
-  const recentDays = Array.from({ length: currentDay - minDay + 1 }, (_, i) => minDay + i);
+  const recentDays = currentDay < 0
+    ? []
+    : Array.from({ length: currentDay - minDay + 1 }, (_, i) => minDay + i);
 
   return (
     <div className="space-y-6">
