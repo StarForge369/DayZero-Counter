@@ -31,12 +31,12 @@ if (!fs.existsSync(SYNC_FILE)) {
 }
 
 export function readSyncStore(): Record<string, any> {
-  try {
-    const raw = fs.readFileSync(SYNC_FILE, 'utf-8');
-    return JSON.parse(raw);
-  } catch {
-    return {};
+  const raw = fs.readFileSync(SYNC_FILE, 'utf-8');
+  const parsed: unknown = JSON.parse(raw);
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('Sync storage must contain a JSON object.');
   }
+  return parsed as Record<string, any>;
 }
 
 export function writeSyncStore(data: Record<string, any>): boolean {
@@ -98,6 +98,16 @@ export function handleSyncApi(req: IncomingMessage, res: ServerResponse, next: (
       return;
     }
 
+    let entry: Record<string, any> | undefined;
+    try {
+      entry = readSyncStore()[syncKey];
+    } catch (error) {
+      console.error('Failed to read sync store:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Sync storage is unavailable' }));
+      return;
+    }
+
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
@@ -111,8 +121,6 @@ export function handleSyncApi(req: IncomingMessage, res: ServerResponse, next: (
     clients.add(res);
 
     // Send only this key's state; never fall back to a shared global record.
-    const store = readSyncStore();
-    const entry = store[syncKey];
     if (entry) {
       res.write(`data: ${JSON.stringify(entry)}\n\n`);
     }
@@ -126,7 +134,7 @@ export function handleSyncApi(req: IncomingMessage, res: ServerResponse, next: (
       }
     }, 15000);
 
-    req.on('close', () => {
+    res.on('close', () => {
       clearInterval(keepalive);
       clients.delete(res);
       if (clients.size === 0) {
@@ -198,8 +206,15 @@ export function handleSyncApi(req: IncomingMessage, res: ServerResponse, next: (
       return;
     }
 
-    const store = readSyncStore();
-    const entry = store[syncKey];
+    let entry: Record<string, any> | undefined;
+    try {
+      entry = readSyncStore()[syncKey];
+    } catch (error) {
+      console.error('Failed to read sync store:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Sync storage is unavailable' }));
+      return;
+    }
 
     if (!entry) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -214,6 +229,14 @@ export function handleSyncApi(req: IncomingMessage, res: ServerResponse, next: (
 
   // 4. Health Check: GET /api/health
   if (pathname === '/api/health') {
+    try {
+      readSyncStore();
+    } catch (error) {
+      console.error('Sync health check could not read storage:', error);
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'storage-unavailable' }));
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }));
     return;

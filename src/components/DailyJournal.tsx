@@ -8,6 +8,7 @@ import {
   format12HourTime,
   toLocalDateString,
   playHapticSound,
+  parseLocalDateString,
 } from '../utils/dateUtils';
 import { BookOpen, Plus, Trash2, Calendar, Sparkles, Tag } from 'lucide-react';
 import { notifyLocalStateChanged } from '../utils/syncService';
@@ -44,7 +45,7 @@ export const DailyJournal: React.FC<DailyJournalProps> = ({
         counterId: counter.id,
         dayNumber: 0,
         dateStr: counter.startDate,
-        text: `Origin Day 0 established on ${formatDDMMYYYY(new Date(counter.startDate))} at ${format12HourTime(counter.startTime)}. The journey begins here.`,
+        text: `Origin Day 0 established on ${formatDDMMYYYY(parseLocalDateString(counter.startDate))} at ${format12HourTime(counter.startTime)}. The journey begins here.`,
         createdAt: new Date().toISOString(),
       },
     ];
@@ -210,7 +211,7 @@ export const DailyJournal: React.FC<DailyJournalProps> = ({
             No notes logged yet.
           </div>
         ) : (
-          notes
+          [...notes]
             .sort((a, b) => b.dayNumber - a.dayNumber)
             .map((note) => {
               const noteDate = getDateForDayNumber(counter.startDate, note.dayNumber);

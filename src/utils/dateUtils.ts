@@ -5,12 +5,37 @@
  */
 
 export function parseDateString(dateStr: string): { year: number; month: number; day: number } {
-  const parts = dateStr.split('-').map(Number);
-  return {
-    year: parts[0],
-    month: parts[1], // 1-indexed
-    day: parts[2],
-  };
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!match) throw new RangeError(`Invalid calendar date: ${dateStr}`);
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    throw new RangeError(`Invalid calendar date: ${dateStr}`);
+  }
+  return { year, month, day };
+}
+
+export function isValidDateString(dateStr: unknown): dateStr is string {
+  if (typeof dateStr !== 'string') return false;
+  try {
+    parseDateString(dateStr);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Parses a YYYY-MM-DD value as a local calendar date rather than UTC. */
+export function parseLocalDateString(dateStr: string): Date {
+  const { year, month, day } = parseDateString(dateStr);
+  return new Date(year, month - 1, day);
 }
 
 /**
@@ -39,7 +64,14 @@ export function toLocalTimeString(date: Date = new Date()): string {
  * Next calendar day returns 1 (Day 1).
  */
 export function getCalendarDaysElapsed(startDateStr: string, targetDate: Date = new Date()): number {
-  const { year, month, day } = parseDateString(startDateStr);
+  let parts: { year: number; month: number; day: number };
+  try {
+    parts = parseDateString(startDateStr);
+  } catch {
+    return 0;
+  }
+  if (!Number.isFinite(targetDate.getTime())) return 0;
+  const { year, month, day } = parts;
   const startUtc = Date.UTC(year, month - 1, day);
   const targetUtc = Date.UTC(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
 
@@ -53,10 +85,22 @@ export function getCalendarDaysElapsed(startDateStr: string, targetDate: Date = 
  * from start date & time to current moment.
  */
 export function getLiveTimeElapsed(startDateStr: string, startTimeStr = '00:00:00', now: Date = new Date()) {
-  const { year, month, day } = parseDateString(startDateStr);
-  const [hours, minutes, seconds] = (startTimeStr || '00:00:00').split(':').map(Number);
+  let parts: { year: number; month: number; day: number };
+  try {
+    parts = parseDateString(startDateStr);
+  } catch {
+    parts = { year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate() };
+  }
+  const timeMatch = /^(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(startTimeStr || '00:00:00');
+  const [hours, minutes, seconds] = timeMatch
+    ? [Number(timeMatch[1]), Number(timeMatch[2]), Number(timeMatch[3] || '0')]
+    : [0, 0, 0];
+  const safeHours = hours <= 23 ? hours : 0;
+  const safeMinutes = minutes <= 59 ? minutes : 0;
+  const safeSeconds = seconds <= 59 ? seconds : 0;
+  const { year, month, day } = parts;
 
-  const startMoment = new Date(year, month - 1, day, hours || 0, minutes || 0, seconds || 0);
+  const startMoment = new Date(year, month - 1, day, safeHours, safeMinutes, safeSeconds);
   const diffMs = now.getTime() - startMoment.getTime();
   const isPast = diffMs >= 0;
 
@@ -109,7 +153,7 @@ export function getLiveTimeElapsed(startDateStr: string, startTimeStr = '00:00:0
 export function getDateForDayNumber(startDateStr: string, dayNumber: number): Date {
   const { year, month, day } = parseDateString(startDateStr);
   const date = new Date(year, month - 1, day);
-  date.setDate(date.getDate() + dayNumber);
+  if (Number.isFinite(dayNumber)) date.setDate(date.getDate() + Math.trunc(dayNumber));
   return date;
 }
 
@@ -141,7 +185,11 @@ export function formatReadableDate(date: Date, includeDayName = false): string {
  */
 export function format12HourTime(timeStr?: string): string {
   if (!timeStr) return '12:00 AM';
-  const [h = 0, m = 0] = timeStr.split(':').map(Number);
+  const match = /^(\d{1,2}):(\d{2})(?::\d{2})?$/.exec(timeStr);
+  if (!match) return '12:00 AM';
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  if (h > 23 || m > 59) return '12:00 AM';
   const period = h >= 12 ? 'PM' : 'AM';
   const hours12 = h % 12 || 12;
   return `${hours12}:${String(m).padStart(2, '0')} ${period}`;
@@ -171,6 +219,9 @@ export function playHapticSound(type: 'click' | 'celebrate' | 'reset' = 'click')
     const gain = ctx.createGain();
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.addEventListener('ended', () => {
+      void ctx.close().catch(() => {});
+    }, { once: true });
 
     if (type === 'click') {
       osc.type = 'sine';

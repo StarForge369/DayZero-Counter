@@ -8,6 +8,7 @@ import {
   format12HourTime,
   getCalendarDaysElapsed,
   playHapticSound,
+  parseLocalDateString,
 } from '../utils/dateUtils';
 import { X, Copy, Check, Sparkles, Download } from 'lucide-react';
 
@@ -29,7 +30,7 @@ export const ShareCardModal: React.FC<ShareCardModalProps> = ({
   const today = new Date();
 
   const shareText = `🌟 Day ${currentDay} on Day Zero\n\n` +
-    `• Origin Date: ${formatDDMMYYYY(new Date(counter.startDate))} at ${format12HourTime(counter.startTime)} (Day 0)\n` +
+    `• Origin Date: ${formatDDMMYYYY(parseLocalDateString(counter.startDate))} at ${format12HourTime(counter.startTime)} (Day 0)\n` +
     `• Today: ${formatFullDate(today)} (Day ${currentDay})\n` +
     `• Status: ${currentDay === 0 ? 'Origin Day Kickoff' : `${currentDay} full calendar days elapsed`}\n\n` +
     `Keep counting forward on Day Zero.`;
@@ -95,7 +96,7 @@ export const ShareCardModal: React.FC<ShareCardModalProps> = ({
 
           {/* Card Footer */}
           <div className="pt-4 border-t border-stone-800/80 flex items-center justify-between text-[11px] font-mono text-stone-400 relative z-10">
-            <span>Origin: {formatDDMMYYYY(new Date(counter.startDate))} at {format12HourTime(counter.startTime)} (Day 0)</span>
+            <span>Origin: {formatDDMMYYYY(parseLocalDateString(counter.startDate))} at {format12HourTime(counter.startTime)} (Day 0)</span>
             <span>Day 1: Next Day</span>
           </div>
         </div>

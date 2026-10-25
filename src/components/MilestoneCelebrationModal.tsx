@@ -6,6 +6,7 @@ import {
   formatFullDate,
   getDateForDayNumber,
   playHapticSound,
+  parseLocalDateString,
 } from '../utils/dateUtils';
 import { Award, Sparkles, X, Share2, Check } from 'lucide-react';
 
@@ -63,7 +64,7 @@ export const MilestoneCelebrationModal: React.FC<MilestoneCelebrationModalProps>
           </p>
 
           <p className="text-xs text-stone-500 dark:text-stone-400 pt-1 font-mono">
-            Origin: {formatDDMMYYYY(new Date(counter.startDate))} · Reached on {formatDDMMYYYY(milestoneDate)}
+            Origin: {formatDDMMYYYY(parseLocalDateString(counter.startDate))} · Reached on {formatDDMMYYYY(milestoneDate)}
           </p>
         </div>
 

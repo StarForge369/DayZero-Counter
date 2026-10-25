@@ -40,6 +40,8 @@ export function sendNativeNotification(title: string, body: string) {
           badge: icon,
           data: { url: new URL('?tab=milestones', reg.scope).toString() },
         });
+      }).catch((err) => {
+        console.warn('Service worker notification failed:', err);
       });
     } else {
       new Notification(title, {
@@ -67,6 +69,13 @@ export function markMilestoneNotified(counterId: string, dayNumber: number) {
       const updated = [...current, dayNumber];
       localStorage.setItem(`${NOTIFIED_STORAGE_PREFIX}${counterId}`, JSON.stringify(updated));
     }
+  } catch {}
+}
+
+export function resetNotifiedMilestones(counterId: string) {
+  try {
+    localStorage.setItem(`${NOTIFIED_STORAGE_PREFIX}${counterId}`, JSON.stringify([]));
+    window.dispatchEvent(new Event('dayzero_local_mutated'));
   } catch {}
 }
 
