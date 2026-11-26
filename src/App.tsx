@@ -242,7 +242,7 @@ export default function App() {
 
   useEffect(() => {
     setLastSyncedAt(undefined);
-    setIsRealTimeConnected(false);
+    setIsRealTimeConnected(null);
   }, [syncKey]);
 
   // Immediate Cloud Push Function: scans all counters to preserve entire dataset
