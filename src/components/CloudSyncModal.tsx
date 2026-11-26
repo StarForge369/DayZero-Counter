@@ -11,7 +11,7 @@ interface CloudSyncModalProps {
   onConnectSyncKey: (newKey: string) => Promise<'loaded' | 'created' | 'failed'>;
   onTriggerSyncNow: () => Promise<void>;
   lastSyncedAt?: string;
-  isConnected: boolean;
+  isConnected: boolean | null;
   isSyncing: boolean;
   soundEnabled?: boolean;
 }
@@ -133,14 +133,16 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
             </div>
 
             <div className="flex items-center justify-center gap-2 mt-2 text-xs text-stone-500 dark:text-stone-400 font-mono">
-              <span className={`w-2 h-2 rounded-full ${isSyncing ? 'bg-sky-500 animate-pulse' : isConnected ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+              <span className={`w-2 h-2 rounded-full ${isSyncing ? 'bg-sky-500 animate-pulse' : isConnected === true ? 'bg-emerald-500' : isConnected === null ? 'bg-amber-500 animate-pulse' : 'bg-amber-500'}`} />
               <span>
                 {isSyncing
                   ? 'Syncing…'
-                  : lastSyncedAt && isConnected
+                  : lastSyncedAt && isConnected === true
                   ? `Synced ${new Date(lastSyncedAt).toLocaleTimeString()}`
-                  : isConnected
+                  : isConnected === true
                   ? 'Cloud connected'
+                  : isConnected === null
+                  ? 'Connecting to cloud…'
                   : 'Cloud unavailable'}
               </span>
             </div>

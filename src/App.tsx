@@ -114,7 +114,9 @@ export default function App() {
   // Cloud Sync Key state
   const [syncKey, setSyncKey] = useState<string>(() => getOrCreateSyncKey());
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const [isRealTimeConnected, setIsRealTimeConnected] = useState<boolean>(false);
+  // Keep startup distinct from a confirmed disconnect so Firebase's initial
+  // authentication/listener handshake does not flash an offline status.
+  const [isRealTimeConnected, setIsRealTimeConnected] = useState<boolean | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | undefined>(undefined);
   const [clockTick, setClockTick] = useState(0);
 
@@ -850,11 +852,19 @@ export default function App() {
           <div className="flex items-center gap-2">
             <span
               className={`w-2 h-2 rounded-full ${
-                isRealTimeConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+                isRealTimeConnected === true
+                  ? 'bg-emerald-500 animate-pulse'
+                  : isRealTimeConnected === null
+                  ? 'bg-amber-500 animate-pulse'
+                  : 'bg-amber-500'
               }`}
             />
             <span>
-              {isRealTimeConnected ? 'Cloud Sync Available' : 'Cloud Sync Unavailable'}{' '}
+              {isRealTimeConnected === true
+                ? 'Cloud Sync Available'
+                : isRealTimeConnected === null
+                ? 'Connecting to cloud…'
+                : 'Cloud Sync Unavailable'}{' '}
               ({syncKey})
             </span>
           </div>
